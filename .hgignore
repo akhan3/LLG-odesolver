@@ -1,0 +1,24 @@
+# use glob syntax.
+syntax: glob
+obj/*
+bin/*
+*.mif
+*.dat
+*.init
+*.mat
+*.eps
+*.pdf
+*.png
+*.jpg
+*.o
+*.out
+*.log
+*~      # Matlab backup files
+
+# pathdef.m
+# unused/*
+# ohf_mat_files/*
+
+# switch to regexp syntax.
+# syntax: regexp
+# ^\.pc/
