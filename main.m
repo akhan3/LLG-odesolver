@@ -6,15 +6,15 @@ disp 'Running simulation...'
 mex odeStepComp.c
 
 %% parameters
-sp.tf = 5e-13;
+sp.tf = .5e-10;
 sp.dt = 1e-13;
-sp.Ny = 4;   %  Nx*Ny MUST NOT exceed (3,000)^2 = 9,000,000
-sp.Nx = 5;
+sp.Ny = 50;   %  Nx*Ny MUST NOT exceed (3,000)^2 = 9,000,000
+sp.Nx = 50;
 sp.Ms = 8.6e5;
 sp.gamma = 2.21e5;
 sp.alpha = 0.05;
-sp.cCoupl = -0.2;
-sp.cDemag = diag([.4 .4 .2]);
+sp.cCoupl = -0.9;
+sp.cDemag = [.4 .4 .2];
 sp.odeSolver_rk4 = 0;   % if false, Euler-ODE-solver will be used
 sp.useGPU = 0;          % if true, GPU will be used
 
@@ -52,7 +52,7 @@ M(:,:,:,1) = ic.M;
 % H = zeros(3,sp.Ny,sp.Nx); % could pre-allocate Hfield to save time
 for it = 1:length(t)-1      % all but last
     A = odeStep(sp, bc, M(:,:,:,it), Hext(:,:,:,it));
-    % M(:,:,:,it+1) = odeStep(sp, bc, M(:,:,:,it), Hext(:,:,:,it));
+    M(:,:,:,it+1) = odeStep(sp, bc, M(:,:,:,it), Hext(:,:,:,it));
     % timeTaken = toc;
     % fprintf('ODE step executed in %g runtime seconds\n', timeTaken);
 end

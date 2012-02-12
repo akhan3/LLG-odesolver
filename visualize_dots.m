@@ -3,7 +3,7 @@
 
 %figure; 
 clf;
-colormap('jet'); 
+colormap('hot'); 
 %subplot(121); 
 Ms = sp.Ms;
     ih = imagesc(squeeze(M(3,:,:,1)), [-Ms Ms]); axis equal; axis ij; axis([1 sp.Nx 1 sp.Ny]); 
