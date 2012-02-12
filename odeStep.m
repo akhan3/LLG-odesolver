@@ -10,8 +10,9 @@ function [Mnext] = odeStep(sp, bc, M, Hext)
 %squeeze(MM(1,:,:));
 %MM
 
-[Mnext] = odeStepComp(sp, single(M), single(Hext));
-%[Mnext] = odeStepMat(sp, bc, single(M), single(Hext));
+%[Mnext] = odeStepComp(sp, single(M), single(Hext));
+
+[Mnext] = odeStepMat(sp, bc, single(M), single(Hext));
 
 
 

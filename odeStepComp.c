@@ -12,6 +12,7 @@
 #include "mex.h"
 #include "string.h"
 #include "assert.h"
+#include "math.h"
 
 typedef float single;
 
@@ -60,7 +61,7 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
 	/* TODO: Some optimization room here */
 	int Nxy = sp.Ny * sp.Nx;	// size of array
 	/* Start with the external field */
-	memcpy(H, Hext, 3*Nxy);
+	memcpy(H, Hext, 3*Nxy*sizeof(single));
 
 	/* Iterate over all the dots */
     for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
@@ -69,19 +70,20 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
 		H[i*3+1] += -sp.cDemag[1] * M[i*3+1];
 		H[i*3+2] += -sp.cDemag[2] * M[i*3+2];
 	}
+	
 	/* Iterate over all the dots except for the boundary,
 	 * in column-major-order, as the data is from MATLAB */
     for( int x = 1; x < sp.Nx-1; ++x ) {		// exclude boundary dots
 		for( int y = 1; y < sp.Ny-1; ++y ) {	// exclude boundary dots
 			/* TODO: resolve the ambiguity in matrix style axes and xy-coord axes */
-			single *Mtop = &M[ (y+1)*3+ x   *sp.Ny ];	// +y (a/c to xy-cood axes)
-			single *Mbot = &M[ (y-1)*3+ x   *sp.Ny ];	// -y
-			single *Mrig = &M[  y   *3+(x+1)*sp.Ny ];	// +x
-			single *Mlef = &M[  y   *3+(x-1)*sp.Ny ];	// -x
+			single *Mtop = &M[ (y+1)*3+ x   *sp.Ny*3 ];	// +y (a/c to xy-cood axes)
+			single *Mbot = &M[ (y-1)*3+ x   *sp.Ny*3 ];	// -y
+			single *Mrig = &M[  y   *3+(x+1)*sp.Ny*3 ];	// +x
+			single *Mlef = &M[  y   *3+(x-1)*sp.Ny*3 ];	// -x
 			/* Add the coupling field now */
-			H[y*3+x*sp.Ny+0] += -sp.cCoupl * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
-			H[y*3+x*sp.Ny+1] += -sp.cCoupl * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
-			H[y*3+x*sp.Ny+2] += -sp.cCoupl * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
+			H[y*3+x*sp.Ny*3+0] += sp.cCoupl * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
+			H[y*3+x*sp.Ny*3+1] += sp.cCoupl * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
+			H[y*3+x*sp.Ny*3+2] += sp.cCoupl * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
 		}
 	}
 	/* Iterate over the dots on the boundaries */
@@ -100,11 +102,17 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
  *  \param Hext Current external field */
 void eulerStep( single *Mnext, simParam sp, single *M, single *Hext ) 
 {
-	mexPrintf("Now running Euler's step...\n", sp.tf);
+    // for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
+		// Mnext[i*3+0] = M[i*3+0];
+		// Mnext[i*3+1] = M[i*3+1];
+		// Mnext[i*3+2] = M[i*3+2];
+	// }
+	// return;
+	// mexPrintf("Now running Euler's step...\n", sp.tf);
 	int Nxy = sp.Ny * sp.Nx;	// size of array
 	/* Compute the field */
     single *H = (single*)calloc( 3*Nxy, sizeof(single) );
-	Hfield( H, sp, M, Hext ) ;
+	Hfield( H, sp, M, Hext );
     /* Advance to the next time instant */
     for( int i = 0; i < Nxy; ++i ) {
 		single Mprime[3];
@@ -112,6 +120,13 @@ void eulerStep( single *Mnext, simParam sp, single *M, single *Hext )
 		Mnext[i*3+0] = M[i*3+0] + Mprime[0] * sp.dt;
 		Mnext[i*3+1] = M[i*3+1] + Mprime[1] * sp.dt;
 		Mnext[i*3+2] = M[i*3+2] + Mprime[2] * sp.dt;
+		/* re-normalize the M vectors */
+		// single magnitude = sqrt( Mnext[i*3+0]*Mnext[i*3+0] + 
+								 // Mnext[i*3+1]*Mnext[i*3+1] + 
+								 // Mnext[i*3+2]*Mnext[i*3+2] );
+		// Mnext[i*3+0] *= sp.Ms / magnitude;
+		// Mnext[i*3+1] *= sp.Ms / magnitude;
+		// Mnext[i*3+2] *= sp.Ms / magnitude;
 	}
 	/* clean-up */
 	free(H);
@@ -139,6 +154,13 @@ simParam parseSimParam( const mxArray *spIn )
         .useGPU = mxGetScalar(mxGetField(spIn, 0, "useGPU"))
     };
     return sp;
+	mxArray *cDemagArray = mxGetField(spIn, 0, "cDemag");
+	mexPrintf("mxGetNumberOfDimensions(cDemagArray) = %d\n", mxGetNumberOfDimensions(cDemagArray));
+	mexPrintf("mxGetClassName(cDemagArray) = %s\n", mxGetClassName(cDemagArray));
+	mexPrintf("sp.cDemag = [%g %g %g]\n", sp.cDemag[0], sp.cDemag[1], sp.cDemag[2]);
+	// mexPrintf("sp.Ms = %g\n", sp.Ms);
+	// mexPrintf("sp.alpha = %g\n", sp.alpha);
+	// mexPrintf("sp.gamma = %g\n", sp.gamma);
     // /* Create 3D arrays for M and Hext */
     // assert(mxGetNumberOfDimensions(MIn) == 3);	// must be a 3D array
     // const mwSize *dims = mxGetDimensions(MIn);
@@ -184,7 +206,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
 
 	/* Create output array */
     const mwSize *dims = mxGetDimensions(MIn);
-	mxArray *MnextOut = mxCreateNumericArray( mxGetNumberOfDimensions(HextIn), 
+	mxArray *MnextOut = mxCreateNumericArray( mxGetNumberOfDimensions(MIn), 
 										  mxGetDimensions(MIn), 
 										  mxSINGLE_CLASS, mxREAL );
     single *Mnext = mxGetData( MnextOut );
