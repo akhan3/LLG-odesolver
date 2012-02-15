@@ -4,7 +4,7 @@ function [Mnext] = odeStepMat(sp, M, Hext)
     else
         Mnext = eulerStep(sp, M, Hext);
     end
-    % TODO: Add option to add hard-M regions
+    % TODO: Add option to add fixed-M regions
     % TODO: Add option to re-normalize M
 end
 
@@ -22,15 +22,15 @@ function [Mnext] = rk4Step(sp, M, Hext)
     k1 = LLG_Mprime(sp, M, H);
     Mnext = M + k1*sp.dt/2.0;
     % k2
-    H = Hfield(sp, Mnext, Hext);    % TODO: error bcoz not interpolating Hext(t+dt/2)
+    H = Hfield(sp, Mnext, Hext);    % TODO: small error bcoz not interpolating Hext(t+dt/2)
     k2 = LLG_Mprime(sp, Mnext, H);
     Mnext = M + k2*sp.dt/2.0;
     % k3
-    H = Hfield(sp, Mnext, Hext);    % TODO: error bcoz not interpolating Hext(t+dt/2)
+    H = Hfield(sp, Mnext, Hext);    % TODO: small error bcoz not interpolating Hext(t+dt/2)
     k3 = LLG_Mprime(sp, Mnext, H);
     Mnext = M + k3*sp.dt;
     % k4
-    H = Hfield(sp, Mnext, Hext);    % TODO: error bcoz not using Hext(t+dt)
+    H = Hfield(sp, Mnext, Hext);    % TODO: small error bcoz not using Hext(t+dt)
     k4 = LLG_Mprime(sp, Mnext, H);
     Mnext = M + (k1+2*k2+2*k3+k4)/6.0 * sp.dt;
 end

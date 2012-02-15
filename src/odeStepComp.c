@@ -50,6 +50,11 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
     Mprime[2] = -sp.gamma * MxH[2] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[2];
 }
 
+/* TODO: Implement RK4 Solver
+ * TODO: Include Boundary conditions
+ * TODO: Spatially varying parameters
+ */
+
 
 /*! Takes one ODE step by Euler's method.
  *  \param H Return pointer for total effective field
