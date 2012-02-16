@@ -18,17 +18,18 @@ clear
     sp.startTimeStamp = clock;  % record the start wall-clock-time
     sp.finishedWithSuccess = 0; % initially mark as unsuccessful
     % simulation time
-    sp.tf = 1e-9;
-    sp.dt = 1e-13;
-    sp.t = [0:sp.dt:sp.tf];
-    sp.Nt = length(sp.t);
+    sp.ti = 0;  % initial time
+    sp.tf = 1e-9;   % final time
+    sp.dt = 1e-13;  % time step
+    sp.t = [sp.ti:sp.dt:sp.tf]; % time array
+    sp.Nt = length(sp.t)+1;   % number of time points
     % number of the dots
         % Nx*Ny MUST NOT exceed (5000)^2
         % Total GPU memory = 2.8177e+09 Bytes
         % Each dot requires 3*4 Bytes
         % 2.8177e+09/12/10 to accommodate M(t),M(t+1)Hext,... on the GPU
-    sp.Ny = 50;     % #rows of dots in the plane
-    sp.Nx = 50;     % #columns of dots in the plane
+    sp.Ny = 100;     % #rows of dots in the plane
+    sp.Nx = 100;     % #columns of dots in the plane
     % material parametrs
         % TODOL: spatially varying
     sp.Ms = 8.6e5;
@@ -51,8 +52,10 @@ clear
     %                   r = row coordinate
     %                   c = column coordinate in plane
     %                   t = time coordinate
-    M = zeros(3,sp.Ny,sp.Nx,sp.Nt);     % can be huge in size
-    Hext = zeros(size(M));              % same as size of M
+    % It is better to define them as single precision,
+    % otherwise they will be converted by the validateSimParam routine anyway.
+    M = single(zeros(3,sp.Ny,sp.Nx,sp.Nt)); % can be huge in size
+    Hext = single(zeros(size(M)));          % same size as of M
 
 
 %===============================================================================
@@ -73,32 +76,35 @@ clear
         theta = 40 * pi/180 .* ones(sp.Ny, sp.Nx);
         phi   = 2*pi .* rand(sp.Ny, sp.Nx);
     end
-    ic.M = zeros(3,sp.Ny,sp.Nx);
-    ic.M(1,:,:) = sp.Ms .* sin(theta) .* cos(phi);
-    ic.M(2,:,:) = sp.Ms .* sin(theta) .* sin(phi);
-    ic.M(3,:,:) = sp.Ms .* cos(theta);
+    initCond.M = zeros(3,sp.Ny,sp.Nx);
+    initCond.M(1,:,:) = sp.Ms .* sin(theta) .* cos(phi);
+    initCond.M(2,:,:) = sp.Ms .* sin(theta) .* sin(phi);
+    initCond.M(3,:,:) = sp.Ms .* cos(theta);
+    % assign initCond.M to M(r,t=1) - DON'T FORGET!
+    M(:,:,:,1) = initCond.M;
 
 
 %===============================================================================
 %% Boundary condtions for M
 %===============================================================================
-    bc.Mtop = zeros(3,sp.Nx);    % +x top
-    bc.Mbot = zeros(3,sp.Nx);    % -x bottom
-    bc.Mrig = zeros(3,sp.Ny);    % +y right
-    bc.Mlef = zeros(3,sp.Ny);    % -y left
-    sp.bc = bc; % Must add bc to the simParam structure - IMPORTANT!
+    sp.boundCond.Mtop = zeros(3,sp.Nx);    % +x top
+    sp.boundCond.Mbot = zeros(3,sp.Nx);    % -x bottom
+    sp.boundCond.Mrig = zeros(3,sp.Ny);    % +y right
+    sp.boundCond.Mlef = zeros(3,sp.Ny);    % -y left
 
 
 %===============================================================================
 %% Validate the parameters - VERY IMPORTANT!
 %===============================================================================
 fprintf('INFO: Starting simulation...\n');
+fprintf('INFO: Verifying simulation parameters...\n');
 [success,sp,M,Hext] = validateSimParam(sp,M,Hext);
 if success == 0
     fprintf('ERROR: Simulation cannot start due to bad parameters.\n');
     return;
 else
-    fprintf('INFO: All simulation parameters have been verified.\n'); sp
+    fprintf('INFO: All simulation parameters have been verified.\n');
+    sp
 end
 
 
@@ -106,7 +112,7 @@ end
 %% Time marching
 %===============================================================================
 fprintf('INFO: Time marching for %d points...\n', sp.Nt);
-M(:,:,:,1) = ic.M;  % assign ic.M to M(t=1)
+M(:,:,:,1) = initCond.M;  % assign initCond.M to M(t=1)
 % H = zeros(3,sp.Ny,sp.Nx); % could pre-allocate Hfield to save time
 for k = 1:length(sp.t)-1   % solve ODE for all time points but last
     fprintf('INFO: %.1f%% t(%d)=%gs: ', ...
@@ -114,7 +120,7 @@ for k = 1:length(sp.t)-1   % solve ODE for all time points but last
     tic;    % code instrumentation
     M(:,:,:,k+1) = odeStepComp(sp, M(:,:,:,k), Hext(:,:,:,k));
     timeTaken = toc;
-    fprintf('ODE step executed in %.2g ms runtime\n', timeTaken*1000);
+    fprintf('ODE step executed in %.2f ms runtime\n', timeTaken*1000);
 end
 
 %===============================================================================
@@ -123,11 +129,12 @@ end
 sp.stopTimeStamp = clock;   % record the stop wall-clock-time
 sp.runTime = datevec(datenum(sp.stopTimeStamp) - datenum(sp.startTimeStamp));
 sp.finishedWithSuccess = 1; % now mark as a successful finish
-fprintf('INFO: simParam structure\n'); sp
+fprintf('INFO: simParam structure\n');
+sp
 fprintf('INFO: Simulation Finished!\n');
 
 
 %===============================================================================
 %% Post processing (optional): save the data and visualize the result
 %===============================================================================
-% animateDots
+animateDots
