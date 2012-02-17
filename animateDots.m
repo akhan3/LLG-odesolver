@@ -13,14 +13,17 @@ clf;
 if doQuiver
     subplot(121);
 end
-ih = imagesc(mz(:,:,1), [-1 1]);
+ih = pcolor(mz(:,:,1));
+shading interp;
+%ih = imagesc(mz(:,:,1), [-1 1]);
+%ih = imagesc(mz(:,:,1));
 axis equal;
 axis ij;
 axis([1 sp.Nx 1 sp.Ny]);
 ith = title('m_z(n = 0)');
 colormap('hot');
 % colormap('jet');
-% colorbar;
+colorbar;
 
 if doQuiver
     subplot(122);
@@ -28,11 +31,11 @@ if doQuiver
     axis ij; axis equal; grid off; axis([1 sp.Nx 1 sp.Ny -1 1]);
     qh = quiver3(X,Y,Z, mx(:,:,1), my(:,:,1), mz(:,:,1)); %view(0,90);
     xlabel('x'); ylabel('y'); zlabel('z');
-    view(0,90);
+    view(35,30);
 end
 
 
-for i = 1:20:sp.Nt
+for i = 1:40:sp.Nt
     set(ih, 'cdata', double(mz(:,:,i)));
     set(ith, 'string', ['m_z(n = ', num2str(i), ')']);
     if doQuiver

@@ -27,8 +27,9 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     spDefault.cCoupl = single([-.2 -.2 -.2]);
     spDefault.cDemag = single([.4 .4 .2]);
     % ODE Solver selection
-    spDefault.useRK4 = int32(0);
     spDefault.useGPU = int32(0);
+    spDefault.useRK4 = int32(0);
+    spDefault.preserveNorm = int32(1);
     % Boundary condition defaults to ZERO
     spDefault.boundCond.Mtop = single(zeros(3,sp.Nx));    % +x top
     spDefault.boundCond.Mbot = single(zeros(3,sp.Nx));    % -x bottom
@@ -42,17 +43,41 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     fnames = fieldnames(spDefault);
     for i = 1:length(fnames)
         if ~fieldExists(sp, fnames(i))
-            fprintf('WARNING: sp.%s field does not exist, so creating with default value\n', char(fnames(i)));
+            fprintf('INFO: sp.%s field does not exist, so creating with default value\n', char(fnames(i)));
             cmd = sprintf('sp.%s = spDefault.%s;', char(fnames(i)), char(fnames(i)));
             eval(cmd);
         end
     end
 
     % sanity check for sp.t and sp.Nt
-    % TODO: sanity check for time array
+    if (sum(sp.t ~= [sp.ti:sp.dt:sp.tf]) ~= 0)  % if any element in time array is bad
+        fprintf('INFO: sp.t is badly formed, so fixed it!\n');
+        sp.t = single([sp.ti:sp.dt:sp.tf]);
+    end
     if (sp.Nt ~= length(sp.t))
-        fprintf('WARNING: sp.Nt does not match the length of time array. Fixed it\n');
+        fprintf('INFO: sp.Nt does not match the length of time array, so fixed it!\n');
         sp.Nt = int32(length(sp.t));
+    end
+
+    % sanity check for sp.cCoupl and sp.cDemag
+    if (length(sp.cCoupl) ~= 3)
+        fprintf('ERROR: sp.cCoupl must contain only 3 elements!\n');
+        success = 0;
+        return;
+    elseif (length(sp.cDemag) ~= 3)
+        fprintf('ERROR: sp.cDemag must contain only 3 elements!\n');
+        success = 0;
+        return;
+    end
+
+    % sanity check for boundary conditions
+    if( length(sp.boundCond.Mtop) ~= sp.Nx ) || ...
+            ( length(sp.boundCond.Mbot) ~= sp.Nx ) || ...
+            ( length(sp.boundCond.Mrig) ~= sp.Ny ) || ...
+            ( length(sp.boundCond.Mlef) ~= sp.Ny )
+        fprintf('ERROR: Size of sp.boundCond does not match that of the number of dots!\n');
+        success = 0;
+        return;
     end
 
     %if ~fieldExists(sp,'Ms')
