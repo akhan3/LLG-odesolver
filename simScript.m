@@ -18,30 +18,33 @@ clear
     sp.startTimeStamp = clock;  % record the start wall-clock-time
     sp.finishedWithSuccess = 0; % initially mark as unsuccessful
     % simulation time
-    sp.ti = 0;  % initial time
-    sp.tf = .5e-9;   % final time
-    sp.dt = 1e-13;  % time step
-    sp.t = [sp.ti:sp.dt:sp.tf]; % time array
-    sp.Nt = length(sp.t);   % number of time points
-    % number of the dots
+    sp.ti = 0;      % initial time [s]
+    sp.tf = .5e-9;  % final time [s]
+    sp.dt = 1e-13;  % time step [s]
+    sp.t = [sp.ti:sp.dt:sp.tf]; % time array [s]
+    sp.Nt = length(sp.t);       % number of time points
+    % number and size of the dots
         % Nx*Ny MUST NOT exceed (5000)^2
         % Total GPU memory = 2.8177e+09 Bytes
         % Each dot requires 3*4 Bytes
         % 2.8177e+09/12/10 to accommodate M(t),M(t+1)Hext,... on the GPU
-    sp.Ny = 200;     % #rows of dots in the plane
-    sp.Nx = 200;     % #columns of dots in the plane
+    sp.Ny = 100;     % #rows of dots in the plane
+    sp.Nx = 100;     % #columns of dots in the plane
+    sp.dy = 100e-9;     % height of a dot [m]
+    sp.dx = 100e-9;     % width of a dot [m]
     % material parametrs
         % TODOL: spatially varying
-    sp.Ms = 8.6e5;
-    sp.gamma = 2.21e5;
-    sp.alpha = 0.05;
+    sp.Ms = 8.6e5;      % Saturation Magnetization [A/m]
+    sp.gamma = 2.21e5;  % Gyromagnetic Ratio [1/(A/m/s)]
+    sp.alpha = 0.05;    % daming factor [dim-less]
+    sp.Aexch = 1.3e-11; % Exchange constant [J/A]
     sp.cCoupl = [-.2 -.2 -.2];  % cCoupl is defined to be nagative here
                                 %   and used as it is in field calculation
     sp.cDemag = [.4 .4 .2];     % cDemag is defined to be positive here
                                 %   and used as negative in field calculation
     % ODE Solver selection
     sp.useGPU = 0;  % if 1, GPU will be used
-    sp.useRK4 = 0;  % if 1, RK4-ODE-solver will be used, otherwise Eueler's
+    sp.useRK4 = 0;  % if 1, RK4-ODE-solver will be used, otherwise Euler's
     sp.preserveNorm = 1;    % if 1, after the ODE-step is taken,
                             %   all M vectors will be re-normalized to Ms
 
@@ -124,7 +127,7 @@ clear
     %   bottom-most, right-most and left-most M-vectors in the simulation
     %   domain.
     %
-    % Boundary conditions define only once and outside of time-marching loop
+    % Boundary conditions defined only once and outside of time-marching loop
     %   are essentially Dirichlet boundary conditions. To define Neumann and
     %   other types of boundary conditions, modify the sp.boundCond structure
     %   at each iteration within the time-marcing loop.

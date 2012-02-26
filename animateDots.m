@@ -14,7 +14,7 @@ if doQuiver
     subplot(121);
 end
 ih = pcolor(mz(:,:,1));
-shading interp;
+shading flat;
 %ih = imagesc(mz(:,:,1), [-1 1]);
 %ih = imagesc(mz(:,:,1));
 axis equal;

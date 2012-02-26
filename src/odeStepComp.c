@@ -13,9 +13,9 @@
 #include "string.h"
 #include "assert.h"
 #include "math.h"
-// #ifdef _OPENMP
-// #include <omp.h>
-// #endif
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 typedef float single;
 
@@ -23,8 +23,9 @@ typedef float single;
 typedef struct {
     single dt;
     int Nt, Ny, Nx;
+    single dy, dx;
     single Ms, gamma, alpha;
-    single *cCoupl, *cDemag;
+    single Aexch, *cCoupl, *cDemag;
     single *bcMtop, *bcMbot, *bcMrig, *bcMlef;
     int useRK4, useGPU, preserveNorm;
 } simParam;
@@ -66,6 +67,7 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
 /* TODO: Implement spatially varying parameters
  * DONE: Implement RK4 Solver
  * DONE: Implement the use of boundary conditions
+ * DONE: Implement Exchange field
  */
 
 
@@ -81,24 +83,31 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
     /* Start with the external field */
     memcpy(H, Hext, 3*Nxy*sizeof(single));
     /* Add demagnetization field by iterating over all the dots */
-    // #ifdef _OPENMP
-    // #pragma omp parallel for
-    // #endif
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
         /* Interaction with itself (Demagnetizating field) */
         H[i*3+0] += -sp.cDemag[0] * M[i*3+0];
         H[i*3+1] += -sp.cDemag[1] * M[i*3+1];
         H[i*3+2] += -sp.cDemag[2] * M[i*3+2];
     }
-    /* Add coupling field from nearest neighbours
+    /* Add exchange and coupling fields from nearest neighbours
      * Iterate over all the dots in column-major-order
      * since the data is coming from MATLAB
      * This step is most time consuming (bottle neck) */
+    single mu0 = 4*M_PI*1e-7;   // Vacuum permeability in SI units [N/A^2]
+    single exchangeConstant = 2 * sp.Aexch / (mu0 * sp.Ms *sp.Ms);
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int x = 0; x < sp.Nx; ++x ) {
         for( int y = 0; y < sp.Ny; ++y ) {
             /* DONE: Very clearly document that top means maximum y coordinate amd not first matrix row
              *       This code follows xy-coordinate axes convention */
             single *Mtop, *Mbot, *Mrig, *Mlef;
+            single *M0 = &M[y*3 + x*sp.Ny*3];   // itself
+            /* Pick neighbours */
             // if at top-most row, use top boundary condition
             Mtop = (y == sp.Ny-1) ? &sp.bcMtop[x*3] :
                                     &M[ (y+1)*3+ x   *sp.Ny*3 ]; // +y (wrt to xy-cood axes)
@@ -111,10 +120,20 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
             // if at left-most column, use left boundary condition
             Mlef = (x == 0)       ? &sp.bcMlef[y*3] :
                                     &M[  y   *3+(x-1)*sp.Ny*3 ]; // -x
-            /* Now add the coupling field */
-            H[y*3+x*sp.Ny*3+0] += sp.cCoupl[0] * ( Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0] );
-            H[y*3+x*sp.Ny*3+1] += sp.cCoupl[1] * ( Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1] );
-            H[y*3+x*sp.Ny*3+2] += sp.cCoupl[2] * ( Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2] );
+            /* Laplacian */
+            single L_Mx = (Mrig[0] - 2*M0[0] + Mlef[0]) / (sp.dx*sp.dx) +
+                          (Mtop[0] - 2*M0[0] + Mbot[0]) / (sp.dy*sp.dy);
+            single L_My = (Mrig[1] - 2*M0[1] + Mlef[1]) / (sp.dx*sp.dx) +
+                          (Mtop[1] - 2*M0[1] + Mbot[1]) / (sp.dy*sp.dy);
+            single L_Mz = (Mrig[2] - 2*M0[2] + Mlef[2]) / (sp.dx*sp.dx) +
+                          (Mtop[2] - 2*M0[2] + Mbot[2]) / (sp.dy*sp.dy);
+            /* Now add these two field componets */
+            H[y*3+x*sp.Ny*3+0] += exchangeConstant * L_Mx
+                    + sp.cCoupl[0] * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
+            H[y*3+x*sp.Ny*3+1] += exchangeConstant * L_My
+                    + sp.cCoupl[1] * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
+            H[y*3+x*sp.Ny*3+2] += exchangeConstant * L_Mz
+                    + sp.cCoupl[2] * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
         }
     }
 }
@@ -133,9 +152,9 @@ void eulerStep( single *Mnext, simParam sp, single *M, single *Hext )
     single *H = (single*)calloc( 3*Nxy, sizeof(single) );
     Hfield( H, sp, M, Hext );
     /* Advance to the next time instant */
-    // #ifdef _OPENMP
-    // #pragma omp parallel for
-    // #endif
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < Nxy; ++i ) {
         single Mprime[3];
         LLG( Mprime, sp, &M[i*3], &H[i*3] );
@@ -165,6 +184,9 @@ void rk4Step( single *Mnext, simParam sp, single *M, single *Hext )
     single *slope = (single*)calloc( 3*Nxy, sizeof(single) );
     /* For k1  */
     Hfield( H, sp, M, Hext );   // Compute the field
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < Nxy; ++i ) {
         single Mprime[3];
         LLG( Mprime, sp, &M[i*3], &H[i*3] );
@@ -180,6 +202,9 @@ void rk4Step( single *Mnext, simParam sp, single *M, single *Hext )
     /* For k2 */
     /* TODO: small error because not interpolating Hext(t+dt/2) */
     Hfield( H, sp, Mnext, Hext );   // Compute the field
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < Nxy; ++i ) {
         single Mprime[3];
         LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
@@ -195,6 +220,9 @@ void rk4Step( single *Mnext, simParam sp, single *M, single *Hext )
     /* For k3 */
     /* TODO: small error because not interpolating Hext(t+dt/2) */
     Hfield( H, sp, Mnext, Hext );   // Compute the field
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < Nxy; ++i ) {
         single Mprime[3];
         LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
@@ -209,6 +237,9 @@ void rk4Step( single *Mnext, simParam sp, single *M, single *Hext )
     }
     /* For k4 */
     Hfield( H, sp, Mnext, Hext );   // Compute the field
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
     for( int i = 0; i < Nxy; ++i ) {
         single Mprime[3];
         LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
@@ -244,10 +275,13 @@ simParam parseSimParam( const mxArray *spIn )
         .Nt = mxGetScalar(mxGetField(spIn, 0, "Nt")),
         .Ny = mxGetScalar(mxGetField(spIn, 0, "Ny")),
         .Nx = mxGetScalar(mxGetField(spIn, 0, "Nx")),
+        .dy = mxGetScalar(mxGetField(spIn, 0, "dy")),
+        .dx = mxGetScalar(mxGetField(spIn, 0, "dx")),
 
         .Ms = mxGetScalar(mxGetField(spIn, 0, "Ms")),
         .gamma = mxGetScalar(mxGetField(spIn, 0, "gamma")),
         .alpha = mxGetScalar(mxGetField(spIn, 0, "alpha")),
+        .Aexch = mxGetScalar(mxGetField(spIn, 0, "Aexch")),
         .cCoupl = (single*)mxGetData(mxGetField(spIn, 0, "cCoupl")),
         .cDemag = (single*)mxGetData(mxGetField(spIn, 0, "cDemag")),
 
@@ -262,6 +296,10 @@ simParam parseSimParam( const mxArray *spIn )
     };
     return sp;
 
+    // mexPrintf("sp.dy = %g\n", sp.dy);
+    // mexPrintf("sp.dx = %g\n", sp.dx);
+    // mexPrintf("sp.Aexch = %g\n", sp.Aexch);
+
     // mexPrintf("MEX: sp.useGPU = %d\n", sp.useGPU);
     // mexPrintf("MEX: sp.preserveNorm = %d\n", sp.preserveNorm);
     // mxArray *cDemagArray = mxGetField(spIn, 0, "cDemag");
@@ -269,7 +307,6 @@ simParam parseSimParam( const mxArray *spIn )
     // mexPrintf("mxGetClassName(cDemagArray) = %s\n", mxGetClassName(cDemagArray));
     // mexPrintf("sp.cDemag = [%g %g %g]\n", sp.cDemag[0], sp.cDemag[1], sp.cDemag[2]);
 
-    // mexPrintf("sp.Ms = %g\n", sp.Ms);
     // mexPrintf("sp.alpha = %g\n", sp.alpha);
     // mexPrintf("sp.gamma = %g\n", sp.gamma);
     // /* Create 3D arrays for M and Hext */

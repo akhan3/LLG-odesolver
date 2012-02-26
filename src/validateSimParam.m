@@ -17,13 +17,16 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     spDefault.dt = single(1e-13);
     spDefault.t = single([spDefault.ti:spDefault.dt:spDefault.tf]);
     spDefault.Nt = int32(length(spDefault.t));
-    % number of the dots
+    % number and size of the dots
     spDefault.Ny = int32(20);
     spDefault.Nx = int32(20);
+    spDefault.dy = single(100e-9);
+    spDefault.dx = single(100e-9);
     % material parametrs
     spDefault.Ms = single(8.6e5);
     spDefault.gamma = single(2.21e5);
     spDefault.alpha = single(0.05);
+    spDefault.Aexch = single(1.3e-11);
     spDefault.cCoupl = single([-.2 -.2 -.2]);
     spDefault.cDemag = single([.4 .4 .2]);
     % ODE Solver selection
@@ -59,8 +62,12 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
         sp.Nt = int32(length(sp.t));
     end
 
-    % sanity check for sp.cCoupl and sp.cDemag
-    if (length(sp.cCoupl) ~= 3)
+    % sanity check for sp.Aexch, sp.cCoupl and sp.cDemag
+    if (length(sp.Aexch) ~= 1)
+        fprintf('ERROR: sp.Aexch must be a scalar!\n');
+        success = 0;
+        return;
+    elseif (length(sp.cCoupl) ~= 3)
         fprintf('ERROR: sp.cCoupl must contain only 3 elements!\n');
         success = 0;
         return;
@@ -98,9 +105,12 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     sp.Nt = int32(sp.Nt);
     sp.Ny = int32(sp.Ny);
     sp.Nx = int32(sp.Nx);
+    sp.dy = single(sp.dy);
+    sp.dx = single(sp.dx);
     sp.Ms = single(sp.Ms);
     sp.gamma = single(sp.gamma);
     sp.alpha = single(sp.alpha);
+    sp.Aexch = single(sp.Aexch);
     sp.cCoupl = single(sp.cCoupl);
     sp.cDemag = single(sp.cDemag);
     sp.useRK4 = int32(sp.useRK4);
@@ -121,9 +131,6 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
         fprintf('done\n');
     end
 end
-
-
-
 
 
 %===============================================================================
