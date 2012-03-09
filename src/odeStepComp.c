@@ -25,7 +25,7 @@ typedef struct {
     int Nt, Ny, Nx;
     single dy, dx;
     single Ms, gamma, alpha;
-    single Aexch, *cCoupl, *cDemag;
+    single Aexch, Kanis, *anisVec, *couplVec, *demagVec;
     single *bcMtop, *bcMbot, *bcMrig, *bcMlef;
     int useRK4, useGPU, preserveNorm;
 } simParam;
@@ -78,26 +78,39 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
  *  \param Hext Current external field */
 void Hfield( single *H, simParam sp, single *M, single *Hext )
 {
+    const single mu0 = 4*M_PI*1e-7;   // Vacuum permeability in SI units [N/A^2]
     /* TODO: Maybe some optimization room here */
     int Nxy = sp.Ny * sp.Nx;    // size of array
+
     /* Start with the external field */
     memcpy(H, Hext, 3*Nxy*sizeof(single));
-    /* Add demagnetization field by iterating over all the dots */
+
+    /* Add demagnetization field (interaction only with itself) */
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
     for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
-        /* Interaction with itself (Demagnetizating field) */
-        H[i*3+0] += -sp.cDemag[0] * M[i*3+0];
-        H[i*3+1] += -sp.cDemag[1] * M[i*3+1];
-        H[i*3+2] += -sp.cDemag[2] * M[i*3+2];
+        H[i*3+0] += -sp.demagVec[0] * M[i*3+0];
+        H[i*3+1] += -sp.demagVec[1] * M[i*3+1];
+        H[i*3+2] += -sp.demagVec[2] * M[i*3+2];
     }
+
+    /* Add anisotropy field (interaction only with itself) */
+    const single anisConstant = 2.0 * sp.Kanis / (mu0 * sp.Ms *sp.Ms);
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
+    for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
+        H[i*3+0] += anisConstant * sp.anisVec[0]*sp.anisVec[0]  * M[i*3+0];
+        H[i*3+1] += anisConstant * sp.anisVec[1]*sp.anisVec[1]  * M[i*3+1];
+        H[i*3+2] += anisConstant * sp.anisVec[2]*sp.anisVec[2]  * M[i*3+2];
+    }
+
     /* Add exchange and coupling fields from nearest neighbours
      * Iterate over all the dots in column-major-order
      * since the data is coming from MATLAB
-     * This step is most time consuming (bottle neck) */
-    single mu0 = 4*M_PI*1e-7;   // Vacuum permeability in SI units [N/A^2]
-    single exchangeConstant = 2 * sp.Aexch / (mu0 * sp.Ms *sp.Ms);
+     * This step is most time consuming (bottleneck) */
+    const single exchangeConstant = 2.0 * sp.Aexch / (mu0 * sp.Ms *sp.Ms);
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
@@ -129,11 +142,11 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
                           (Mtop[2] - 2*M0[2] + Mbot[2]) / (sp.dy*sp.dy);
             /* Now add these two field componets */
             H[y*3+x*sp.Ny*3+0] += exchangeConstant * L_Mx
-                    + sp.cCoupl[0] * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
+                    + sp.couplVec[0] * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
             H[y*3+x*sp.Ny*3+1] += exchangeConstant * L_My
-                    + sp.cCoupl[1] * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
+                    + sp.couplVec[1] * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
             H[y*3+x*sp.Ny*3+2] += exchangeConstant * L_Mz
-                    + sp.cCoupl[2] * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
+                    + sp.couplVec[2] * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
         }
     }
 }
@@ -282,8 +295,10 @@ simParam parseSimParam( const mxArray *spIn )
         .gamma = mxGetScalar(mxGetField(spIn, 0, "gamma")),
         .alpha = mxGetScalar(mxGetField(spIn, 0, "alpha")),
         .Aexch = mxGetScalar(mxGetField(spIn, 0, "Aexch")),
-        .cCoupl = (single*)mxGetData(mxGetField(spIn, 0, "cCoupl")),
-        .cDemag = (single*)mxGetData(mxGetField(spIn, 0, "cDemag")),
+        .Kanis = mxGetScalar(mxGetField(spIn, 0, "Kanis")),
+        .anisVec = (single*)mxGetData(mxGetField(spIn, 0, "anisVec")),
+        .couplVec = (single*)mxGetData(mxGetField(spIn, 0, "couplVec")),
+        .demagVec = (single*)mxGetData(mxGetField(spIn, 0, "demagVec")),
 
         .bcMtop = (single*)mxGetData( mxGetField(bc, 0, "Mtop") ),
         .bcMbot = (single*)mxGetData( mxGetField(bc, 0, "Mbot") ),
@@ -295,28 +310,6 @@ simParam parseSimParam( const mxArray *spIn )
         .preserveNorm = mxGetScalar(mxGetField(spIn, 0, "preserveNorm"))
     };
     return sp;
-
-    // mexPrintf("sp.dy = %g\n", sp.dy);
-    // mexPrintf("sp.dx = %g\n", sp.dx);
-    // mexPrintf("sp.Aexch = %g\n", sp.Aexch);
-
-    // mexPrintf("MEX: sp.useGPU = %d\n", sp.useGPU);
-    // mexPrintf("MEX: sp.preserveNorm = %d\n", sp.preserveNorm);
-    // mxArray *cDemagArray = mxGetField(spIn, 0, "cDemag");
-    // mexPrintf("mxGetNumberOfDimensions(cDemagArray) = %d\n", mxGetNumberOfDimensions(cDemagArray));
-    // mexPrintf("mxGetClassName(cDemagArray) = %s\n", mxGetClassName(cDemagArray));
-    // mexPrintf("sp.cDemag = [%g %g %g]\n", sp.cDemag[0], sp.cDemag[1], sp.cDemag[2]);
-
-    // mexPrintf("sp.alpha = %g\n", sp.alpha);
-    // mexPrintf("sp.gamma = %g\n", sp.gamma);
-    // /* Create 3D arrays for M and Hext */
-    // assert(mxGetNumberOfDimensions(MIn) == 3);   // must be a 3D array
-    // const mwSize *dims = mxGetDimensions(MIn);
-    // single *M = (single*)malloc(dims[0]*dims[1]*dims[2]*sizeof(single));
-    // single *Hext = (single*)malloc(dims[0]*dims[1]*dims[2]*sizeof(single));
-    // memcpy((void*)M, mxGetData(MIn), dims[0]*dims[1]*dims[2]*sizeof(single));
-    // memcpy((void*)Hext, mxGetData(HextIn), dims[0]*dims[1]*dims[2]*sizeof(single));
-    // memcpy(mxGetData(MOut), mxGetData(MIn), dims[0]*dims[1]*dims[2]*sizeof(single));
 }
 
 

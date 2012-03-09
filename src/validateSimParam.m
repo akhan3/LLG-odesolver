@@ -27,8 +27,10 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     spDefault.gamma = single(2.21e5);
     spDefault.alpha = single(0.05);
     spDefault.Aexch = single(1.3e-11);
-    spDefault.cCoupl = single([-.2 -.2 -.2]);
-    spDefault.cDemag = single([.4 .4 .2]);
+    spDefault.Kanis = 1e5;
+    spDefault.anisVec = [0 0 1];
+    spDefault.couplVec = single([-.2 -.2 -.2]);
+    spDefault.demagVec = single([.4 .4 .2]);
     % ODE Solver selection
     spDefault.useGPU = int32(0);
     spDefault.useRK4 = int32(0);
@@ -62,17 +64,25 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
         sp.Nt = int32(length(sp.t));
     end
 
-    % sanity check for sp.Aexch, sp.cCoupl and sp.cDemag
+    % sanity check for sp.Aexch, sp.Kanis, sp.anisVec, sp.couplVec and sp.demagVec
     if (length(sp.Aexch) ~= 1)
         fprintf('ERROR: sp.Aexch must be a scalar!\n');
         success = 0;
         return;
-    elseif (length(sp.cCoupl) ~= 3)
-        fprintf('ERROR: sp.cCoupl must contain only 3 elements!\n');
+    elseif (length(sp.Kanis) ~= 1)
+        fprintf('ERROR: sp.Kanis must be a scalar!\n');
         success = 0;
         return;
-    elseif (length(sp.cDemag) ~= 3)
-        fprintf('ERROR: sp.cDemag must contain only 3 elements!\n');
+    elseif (length(sp.anisVec) ~= 3)
+        fprintf('ERROR: sp.anisVec must contain exactly 3 elements!\n');
+        success = 0;
+        return;
+    elseif (length(sp.couplVec) ~= 3)
+        fprintf('ERROR: sp.couplVec must contain exactly 3 elements!\n');
+        success = 0;
+        return;
+    elseif (length(sp.demagVec) ~= 3)
+        fprintf('ERROR: sp.demagVec must contain exactly 3 elements!\n');
         success = 0;
         return;
     end
@@ -111,8 +121,10 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     sp.gamma = single(sp.gamma);
     sp.alpha = single(sp.alpha);
     sp.Aexch = single(sp.Aexch);
-    sp.cCoupl = single(sp.cCoupl);
-    sp.cDemag = single(sp.cDemag);
+    sp.Kanis = single(sp.Kanis);
+    sp.anisVec = single(sp.anisVec);
+    sp.couplVec = single(sp.couplVec);
+    sp.demagVec = single(sp.demagVec);
     sp.useRK4 = int32(sp.useRK4);
     sp.useGPU = int32(sp.useGPU);
     sp.boundCond.Mtop = single(sp.boundCond.Mtop);

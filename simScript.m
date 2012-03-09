@@ -32,16 +32,17 @@ clear
     sp.Nx = 100;     % #columns of dots in the plane
     sp.dy = 100e-9;     % height of a dot [m]
     sp.dx = 100e-9;     % width of a dot [m]
-    % material parametrs
-        % TODOL: spatially varying
-    sp.Ms = 8.6e5;      % Saturation Magnetization [A/m]
-    sp.gamma = 2.21e5;  % Gyromagnetic Ratio [1/(A/m/s)]
-    sp.alpha = 0.05;    % daming factor [dim-less]
-    sp.Aexch = 1.3e-11; % Exchange constant [J/A]
-    sp.cCoupl = [-.2 -.2 -.2];  % cCoupl is defined to be nagative here
-                                %   and used as it is in field calculation
-    sp.cDemag = [.4 .4 .2];     % cDemag is defined to be positive here
-                                %   and used as negative in field calculation
+    % material parameters
+    sp.Ms = 8.6e5;          % Saturation Magnetization [A/m]
+    sp.gamma = 2.21e5;      % Gyromagnetic Ratio [1/(A/m/s)]
+    sp.alpha = 0.05;        % Damping factor [dim-less]
+    sp.Aexch = 1.3e-11;     % Exchange constant [J/A]
+    sp.Kanis = 1e5;         % Anisotropy constant [J/m^3]
+    sp.anisVec = [0 0 1];   % Unit vector defining anisotropy axes [dim-less]
+    sp.couplVec = [-.2 -.2 -.2];    % Coupling coefficient [dim-less]
+        % It is defined to be negative here and used as it is in field calculation
+    sp.demagVec = [.4 .4 .2];       % Demag factor [dim-less]
+        % It is defined to be positive here and used as negative in field calculation
     % ODE Solver selection
     sp.useGPU = 0;  % if 1, GPU will be used
     sp.useRK4 = 0;  % if 1, RK4-ODE-solver will be used, otherwise Euler's
@@ -113,7 +114,7 @@ clear
 
 
 %===============================================================================
-%% Boundary condtions for M
+%% Boundary conditions for M
     % Mtop defines the state of M-vectors just above the row of dots
     %   that is represented by maximum y value, i.e. (y=Ny).
     %   Please note that this is in accordance with xy-Cartesian axes
