@@ -40,7 +40,14 @@ void reNormalize(single *M, const simParam sp) {
 }
 
 
-/*! Implements the cross product, C = AxB.
+/*! Implements the dot product, C = A.B
+ *  Both the vectors must be 3 dimensional. */
+inline single dot(const single *A, const single *B) {
+    return A[0]*B[0] + A[1]*B[1] + A[2]*B[2];
+}
+
+
+/*! Implements the cross product, C = AxB
  *  All vectors must be 3 dimensional. */
 void cross(single *C, const single *A, const single *B) {
     C[0] = A[1]*B[2] - A[2]*B[1];
@@ -101,9 +108,10 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
     #pragma omp parallel for
     #endif
     for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
-        H[i*3+0] += anisConstant * sp.anisVec[0]*sp.anisVec[0]  * M[i*3+0];
-        H[i*3+1] += anisConstant * sp.anisVec[1]*sp.anisVec[1]  * M[i*3+1];
-        H[i*3+2] += anisConstant * sp.anisVec[2]*sp.anisVec[2]  * M[i*3+2];
+        single Mdotk = dot(&M[i*3], sp.anisVec);
+        H[i*3+0] += anisConstant * Mdotk * sp.anisVec[0];
+        H[i*3+1] += anisConstant * Mdotk * sp.anisVec[1];
+        H[i*3+2] += anisConstant * Mdotk * sp.anisVec[2];
     }
 
     /* Add exchange and coupling fields from nearest neighbours
