@@ -6,7 +6,7 @@
  * Project:     Massive ODE Solver
  * Author:      Aamir Ahmed Khan (akhan3@nd.edu)
  * Copyright:   2012, University of Notre Dame
- *==========================================================================*/
+ * =========================================================================*/
 
 
 #include "mex.h"
@@ -69,6 +69,9 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
     Mprime[0] = -sp.gamma * MxH[0] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[0];
     Mprime[1] = -sp.gamma * MxH[1] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[1];
     Mprime[2] = -sp.gamma * MxH[2] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[2];
+    // Mprime[0] = -sp.gamma * (M[1]*H[2]-M[2]*H[1]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[0]*(M[1]*H[1]+M[2]*H[2]) - H[0]*(M[1]*M[1]+M[2]*M[2]) );
+    // Mprime[1] = -sp.gamma * (M[2]*H[0]-M[0]*H[2]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[1]*(M[2]*H[2]+M[0]*H[0]) - H[1]*(M[2]*M[2]+M[0]*M[0]) );
+    // Mprime[2] = -sp.gamma * (M[0]*H[1]-M[1]*H[0]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[2]*(M[0]*H[0]+M[1]*H[1]) - H[2]*(M[0]*M[0]+M[1]*M[1]) );
 }
 
 /* TODO: Implement spatially varying parameters
@@ -78,7 +81,7 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
  */
 
 
-/*! Takes one ODE step by Euler's method.
+/*! Calculates the effictive H-field caused by several phenomena.
  *  \param H Return pointer for total effective field
  *  \param sp Simulation parameters
  *  \param M Current state
@@ -96,7 +99,7 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
+    for( int i = 0; i < Nxy; ++i ) {
         H[i*3+0] += -sp.demagVec[0] * M[i*3+0];
         H[i*3+1] += -sp.demagVec[1] * M[i*3+1];
         H[i*3+2] += -sp.demagVec[2] * M[i*3+2];
@@ -107,7 +110,7 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < sp.Ny*sp.Nx; ++i ) {
+    for( int i = 0; i < Nxy; ++i ) {
         single Mdotk = dot(&M[i*3], sp.anisVec);
         H[i*3+0] += anisConstant * Mdotk * sp.anisVec[0];
         H[i*3+1] += anisConstant * Mdotk * sp.anisVec[1];

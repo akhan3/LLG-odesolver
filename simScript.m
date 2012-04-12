@@ -27,9 +27,9 @@ clear
         % Nx*Ny MUST NOT exceed (5000)^2
         % Total GPU memory = 2.8177e+09 Bytes
         % Each dot requires 3*4 Bytes
-        % 2.8177e+09/12/10 to accommodate M(t),M(t+1)Hext,... on the GPU
+        % 2.8177e+09/12/10 to accommodate M(t),M(t+1),Hext,... on the GPU
     sp.Ny = 100;     % #rows of dots in the plane
-    sp.Nx = 100;     % #columns of dots in the plane
+    sp.Nx = 80;      % #columns of dots in the plane
     sp.dy = 100e-9;     % height of a dot [m]
     sp.dx = 100e-9;     % width of a dot [m]
     % material parameters
@@ -139,10 +139,10 @@ clear
     sp.boundCond.Mrig = zeros(3,sp.Ny);    % +x right
     sp.boundCond.Mlef = zeros(3,sp.Ny);    % -x left
     % set some boundary conditions. They can be changed in time-marching
-    sp.boundCond.Mlef(3,:,:) = -5*sp.Ms;    % set left boundary to all down -z
-    sp.boundCond.Mrig(3,:,:) = +5*sp.Ms;    % set right boundary to all up +z
-    sp.boundCond.Mtop(3,:,:) = +5*sp.Ms;    % set top boundary to all up +z
-    sp.boundCond.Mbot(3,:,:) = -5*sp.Ms;    % set bottom boundary to all down -z
+    sp.boundCond.Mlef(3,:) = -5*sp.Ms;    % set left boundary to all down -z
+    sp.boundCond.Mrig(3,:) = +5*sp.Ms;    % set right boundary to all up +z
+    sp.boundCond.Mtop(3,:) = +5*sp.Ms;    % set top boundary to all up +z
+    sp.boundCond.Mbot(3,:) = -5*sp.Ms;    % set bottom boundary to all down -z
 
 
 %===============================================================================
@@ -176,10 +176,10 @@ for k = 1:length(sp.t)-1   % solve ODE for all time points but last
 
     % Flip the boundary conditions for second half of the simulation
     if k >= int32(sp.Nt/2)
-        sp.boundCond.Mlef(3,:,:) = +5*sp.Ms;
-        sp.boundCond.Mrig(3,:,:) = -5*sp.Ms;
-        sp.boundCond.Mtop(3,:,:) = -5*sp.Ms;
-        sp.boundCond.Mbot(3,:,:) = +5*sp.Ms;
+        sp.boundCond.Mlef(3,:) = +5*sp.Ms;
+        sp.boundCond.Mrig(3,:) = -5*sp.Ms;
+        sp.boundCond.Mtop(3,:) = -5*sp.Ms;
+        sp.boundCond.Mbot(3,:) = +5*sp.Ms;
     end
 end
 
