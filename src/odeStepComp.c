@@ -24,8 +24,9 @@ typedef struct {
     single dt;
     int Nt, Ny, Nx;
     single dy, dx;
-    single Ms, gamma, alpha;
-    single Aexch, Kanis, *anisVec, *couplVec, *demagVec;
+    int numM;
+    single *P;
+    single *Pxy;
     single *bcMtop, *bcMbot, *bcMrig, *bcMlef;
     int useRK4, useGPU, preserveNorm;
 } simParam;
@@ -33,52 +34,42 @@ typedef struct {
 
 /*! Re-normalize the M vector */
 void reNormalize(single *M, const simParam sp) {
+    single Ms = sp.P[0];
     single magnitude = sqrt( M[0]*M[0] + M[1]*M[1] + M[2]*M[2] );
-    M[0] *= sp.Ms / magnitude;
-    M[1] *= sp.Ms / magnitude;
-    M[2] *= sp.Ms / magnitude;
+    M[0] *= Ms / magnitude;
+    M[1] *= Ms / magnitude;
+    M[2] *= Ms / magnitude;
 }
 
 
-/*! Implements the dot product, C = A.B
- *  Both the vectors must be 3 dimensional. */
-inline single dot(const single *A, const single *B) {
-    return A[0]*B[0] + A[1]*B[1] + A[2]*B[2];
+/*! Compensate the M vector */
+void compensateM(single *M, single *Mprev, int ixy, const simParam sp) {
+    if(sp.preserveNorm)
+        reNormalize(M, sp);
+    // check for frozen locations
+    int frozen = (int)sp.Pxy[0*sp.Ny*sp.Nx + ixy];
+    if(frozen) {
+        M[0] = Mprev[0];
+        M[1] = Mprev[1];
+        M[2] = Mprev[2];
+    }
 }
 
 
-/*! Implements the cross product, C = AxB
- *  All vectors must be 3 dimensional. */
-void cross(single *C, const single *A, const single *B) {
-    C[0] = A[1]*B[2] - A[2]*B[1];
-    C[1] = A[2]*B[0] - A[0]*B[2];
-    C[2] = A[0]*B[1] - A[1]*B[0];
-}
-
-
-/*! Evaluates the Landau-Lifshitz-Gilbert (LLG) vector ODE.
+/*! Evaluates the slopes from the vector differential equation.
  *  \param Mprime Return pointer for computed dM/dt vector
  *  \param sp Simulation parameters
  *  \param M Magnetization vector
  *  \param H Field vector acting on M */
-void LLG( single *Mprime, simParam sp, single *M, single *H )
+void differentiateM( single *Mprime, int ixy, simParam sp, single *M, single *H )
 {
-    single MxH[3], MxMxH[3];
-    cross(MxH, M, H);       // MxH
-    cross(MxMxH, M, MxH);   // Mx(MxH)
-    Mprime[0] = -sp.gamma * MxH[0] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[0];
-    Mprime[1] = -sp.gamma * MxH[1] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[1];
-    Mprime[2] = -sp.gamma * MxH[2] - (sp.alpha*sp.gamma/sp.Ms) * MxMxH[2];
-    // Mprime[0] = -sp.gamma * (M[1]*H[2]-M[2]*H[1]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[0]*(M[1]*H[1]+M[2]*H[2]) - H[0]*(M[1]*M[1]+M[2]*M[2]) );
-    // Mprime[1] = -sp.gamma * (M[2]*H[0]-M[0]*H[2]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[1]*(M[2]*H[2]+M[0]*H[0]) - H[1]*(M[2]*M[2]+M[0]*M[0]) );
-    // Mprime[2] = -sp.gamma * (M[0]*H[1]-M[1]*H[0]) - (sp.alpha*sp.gamma/sp.Ms) * ( M[2]*(M[0]*H[0]+M[1]*H[1]) - H[2]*(M[0]*M[0]+M[1]*M[1]) );
+    single Ms = sp.P[0];
+    single gamma = sp.P[1];
+    single alpha = sp.Pxy[1*sp.Ny*sp.Nx + ixy];
+    Mprime[0] = -gamma * (M[1]*H[2]-M[2]*H[1]) - (alpha*gamma/Ms) * ( M[0]*(M[1]*H[1]+M[2]*H[2]) - H[0]*(M[1]*M[1]+M[2]*M[2]) );
+    Mprime[1] = -gamma * (M[2]*H[0]-M[0]*H[2]) - (alpha*gamma/Ms) * ( M[1]*(M[2]*H[2]+M[0]*H[0]) - H[1]*(M[2]*M[2]+M[0]*M[0]) );
+    Mprime[2] = -gamma * (M[0]*H[1]-M[1]*H[0]) - (alpha*gamma/Ms) * ( M[2]*(M[0]*H[0]+M[1]*H[1]) - H[2]*(M[0]*M[0]+M[1]*M[1]) );
 }
-
-/* TODO: Implement spatially varying parameters
- * DONE: Implement RK4 Solver
- * DONE: Implement the use of boundary conditions
- * DONE: Implement Exchange field
- */
 
 
 /*! Calculates the effictive H-field caused by several phenomena.
@@ -86,42 +77,66 @@ void LLG( single *Mprime, simParam sp, single *M, single *H )
  *  \param sp Simulation parameters
  *  \param M Current state
  *  \param Hext Current external field */
-void Hfield( single *H, simParam sp, single *M, single *Hext )
+void Hfield( single *H, simParam sp, single *M )
 {
+    /* TODO: Maybe some optimization room in this function */
     const single mu0 = 4*M_PI*1e-7;   // Vacuum permeability in SI units [N/A^2]
-    /* TODO: Maybe some optimization room here */
     int Nxy = sp.Ny * sp.Nx;    // size of array
 
     /* Start with the external field */
-    memcpy(H, Hext, 3*Nxy*sizeof(single));
-
-    /* Add demagnetization field (interaction only with itself) */
+    // memcpy(H, Hext, 3*Nxy*sizeof(single));
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
-        H[i*3+0] += -sp.demagVec[0] * M[i*3+0];
-        H[i*3+1] += -sp.demagVec[1] * M[i*3+1];
-        H[i*3+2] += -sp.demagVec[2] * M[i*3+2];
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
+        single HextX = sp.Pxy[2*sp.Ny*sp.Nx + ixy];
+        single HextY = sp.Pxy[3*sp.Ny*sp.Nx + ixy];
+        single HextZ = sp.Pxy[4*sp.Ny*sp.Nx + ixy];
+        H[ixy*3+0] = HextX;
+        H[ixy*3+1] = HextY;
+        H[ixy*3+2] = HextZ;
+    }
+
+    /* Add demagnetization field (interaction only with itself) */
+    single demagX = sp.P[11];
+    single demagY = sp.P[12];
+    single demagZ = sp.P[13];
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
+        H[ixy*3+0] += -demagX * M[ixy*3+0];
+        H[ixy*3+1] += -demagY * M[ixy*3+1];
+        H[ixy*3+2] += -demagZ * M[ixy*3+2];
     }
 
     /* Add anisotropy field (interaction only with itself) */
-    const single anisConstant = 2.0 * sp.Kanis / (mu0 * sp.Ms *sp.Ms);
+    single Ms = sp.P[0];
+    single Kanis = sp.P[4];
+    single anisX = sp.P[5];
+    single anisY = sp.P[6];
+    single anisZ = sp.P[7];
+    const single anisConstant = 2.0 * Kanis / (mu0 * Ms*Ms);
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
-        single Mdotk = dot(&M[i*3], sp.anisVec);
-        H[i*3+0] += anisConstant * Mdotk * sp.anisVec[0];
-        H[i*3+1] += anisConstant * Mdotk * sp.anisVec[1];
-        H[i*3+2] += anisConstant * Mdotk * sp.anisVec[2];
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
+        // single Mdotk = dot(&M[ixy*3], sp.anisVec);
+        single Mdotk = M[ixy*3+0]*anisX + M[ixy*3+1]*anisY + M[ixy*3+2]*anisZ;
+        H[ixy*3+0] += anisConstant * Mdotk * anisX;
+        H[ixy*3+1] += anisConstant * Mdotk * anisY;
+        H[ixy*3+2] += anisConstant * Mdotk * anisZ;
     }
 
     /* Add exchange and coupling fields from nearest neighbours
      * Iterate over all the dots in column-major-order
      * since the data is coming from MATLAB
      * This step is most time consuming (bottleneck) */
-    const single exchangeConstant = 2.0 * sp.Aexch / (mu0 * sp.Ms *sp.Ms);
+    single Aexch = sp.P[3];
+    single couplX = sp.P[8];
+    single couplY = sp.P[9];
+    single couplZ = sp.P[10];
+    const single exchangeConstant = 2.0 * Aexch / (mu0 * Ms*Ms);
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
@@ -153,11 +168,11 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
                           (Mtop[2] - 2*M0[2] + Mbot[2]) / (sp.dy*sp.dy);
             /* Now add these two field componets */
             H[y*3+x*sp.Ny*3+0] += exchangeConstant * L_Mx
-                    + sp.couplVec[0] * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
+                    + couplX * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
             H[y*3+x*sp.Ny*3+1] += exchangeConstant * L_My
-                    + sp.couplVec[1] * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
+                    + couplY * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
             H[y*3+x*sp.Ny*3+2] += exchangeConstant * L_Mz
-                    + sp.couplVec[2] * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
+                    + couplZ * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
         }
     }
 }
@@ -168,115 +183,113 @@ void Hfield( single *H, simParam sp, single *M, single *Hext )
  *  \param sp Simulation parameters
  *  \param M Current state
  *  \param Hext Current external field */
-void eulerStep( single *Mnext, simParam sp, single *M, single *Hext )
+void eulerStep( single *Mnext, simParam sp, single *M )
 {
     int Nxy = sp.Ny * sp.Nx;    // size of array
     /* Compute the field */
-    /* TODO: Calloc not necessary */
-    single *H = (single*)calloc( 3*Nxy, sizeof(single) );
-    Hfield( H, sp, M, Hext );
+    /* Allocate memory for as many auxiliary H-fields as necessary */
+    single *H = (single*)calloc( sp.numM*Nxy, sizeof(single) ); // only 1 here
+    Hfield( H, sp, M );
     /* Advance to the next time instant */
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
         single Mprime[3];
-        LLG( Mprime, sp, &M[i*3], &H[i*3] );
-        Mnext[i*3+0] = M[i*3+0] + Mprime[0] * sp.dt;
-        Mnext[i*3+1] = M[i*3+1] + Mprime[1] * sp.dt;
-        Mnext[i*3+2] = M[i*3+2] + Mprime[2] * sp.dt;
-        /* re-normalize the M vectors */
-        if(sp.preserveNorm)
-            reNormalize(&Mnext[i*3], sp);
+        differentiateM( Mprime, ixy, sp, &M[ixy*3], &H[ixy*3] );
+        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * sp.dt;
+        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * sp.dt;
+        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * sp.dt;
+        /* compensate the M vector after update */
+        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
     }
     /* clean-up */
     free(H);
 }
 
-
+/* TODO: RK4 is messed up. Priority */
 /*! Takes one ODE step by Runge-Kutta's 4th order method.
  *  \param Mnext State at the next time instant
  *  \param sp Simulation parameters
  *  \param M Current state
  *  \param Hext Current external field */
-void rk4Step( single *Mnext, simParam sp, single *M, single *Hext )
+void rk4Step( single *Mnext, simParam sp, single *M )
 {
     /* allocate memory for field and slope values */
     /* TODO: Calloc not necessary */
     int Nxy = sp.Ny * sp.Nx;    // size of array
-    single *H = (single*)calloc( 3*Nxy, sizeof(single) );
-    single *slope = (single*)calloc( 3*Nxy, sizeof(single) );
+    single *H = (single*)calloc( sp.numM*Nxy, sizeof(single) );
+    single *slope = (single*)calloc( sp.numM*Nxy, sizeof(single) );
     /* For k1  */
-    Hfield( H, sp, M, Hext );   // Compute the field
+    Hfield( H, sp, M );   // Compute the field
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
         single Mprime[3];
-        LLG( Mprime, sp, &M[i*3], &H[i*3] );
-        Mnext[i*3+0] = M[i*3+0] + Mprime[0] * .5*sp.dt;
-        Mnext[i*3+1] = M[i*3+1] + Mprime[1] * .5*sp.dt;
-        Mnext[i*3+2] = M[i*3+2] + Mprime[2] * .5*sp.dt;
-        if(sp.preserveNorm)
-            reNormalize(&Mnext[i*3], sp);
-        slope[i*3+0] = Mprime[0] / 6.0;
-        slope[i*3+1] = Mprime[1] / 6.0;
-        slope[i*3+2] = Mprime[2] / 6.0;
+        differentiateM( Mprime, ixy, sp, &M[ixy*3], &H[ixy*3] );
+        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * .5*sp.dt;
+        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * .5*sp.dt;
+        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * .5*sp.dt;
+        /* compensate the M vector after update */
+        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
+        slope[ixy*3+0] = Mprime[0] / 6.0;
+        slope[ixy*3+1] = Mprime[1] / 6.0;
+        slope[ixy*3+2] = Mprime[2] / 6.0;
     }
     /* For k2 */
     /* TODO: small error because not interpolating Hext(t+dt/2) */
-    Hfield( H, sp, Mnext, Hext );   // Compute the field
+    Hfield( H, sp, Mnext );   // Compute the field
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
         single Mprime[3];
-        LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
-        Mnext[i*3+0] = M[i*3+0] + Mprime[0] * .5*sp.dt;
-        Mnext[i*3+1] = M[i*3+1] + Mprime[1] * .5*sp.dt;
-        Mnext[i*3+2] = M[i*3+2] + Mprime[2] * .5*sp.dt;
-        if(sp.preserveNorm)
-            reNormalize(&Mnext[i*3], sp);
-        slope[i*3+0] += Mprime[0] / 3.0;
-        slope[i*3+1] += Mprime[1] / 3.0;
-        slope[i*3+2] += Mprime[2] / 3.0;
+        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
+        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * .5*sp.dt;
+        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * .5*sp.dt;
+        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * .5*sp.dt;
+        /* compensate the M vector after update */
+        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
+        slope[ixy*3+0] += Mprime[0] / 3.0;
+        slope[ixy*3+1] += Mprime[1] / 3.0;
+        slope[ixy*3+2] += Mprime[2] / 3.0;
     }
     /* For k3 */
     /* TODO: small error because not interpolating Hext(t+dt/2) */
-    Hfield( H, sp, Mnext, Hext );   // Compute the field
+    Hfield( H, sp, Mnext );   // Compute the field
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
         single Mprime[3];
-        LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
-        Mnext[i*3+0] = M[i*3+0] + Mprime[0] * sp.dt;
-        Mnext[i*3+1] = M[i*3+1] + Mprime[1] * sp.dt;
-        Mnext[i*3+2] = M[i*3+2] + Mprime[2] * sp.dt;
-        if(sp.preserveNorm)
-            reNormalize(&Mnext[i*3], sp);
-        slope[i*3+0] += Mprime[0] / 3.0;
-        slope[i*3+1] += Mprime[1] / 3.0;
-        slope[i*3+2] += Mprime[2] / 3.0;
+        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
+        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * sp.dt;
+        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * sp.dt;
+        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * sp.dt;
+        /* compensate the M vector after update */
+        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
+        slope[ixy*3+0] += Mprime[0] / 3.0;
+        slope[ixy*3+1] += Mprime[1] / 3.0;
+        slope[ixy*3+2] += Mprime[2] / 3.0;
     }
     /* For k4 */
-    Hfield( H, sp, Mnext, Hext );   // Compute the field
+    Hfield( H, sp, Mnext );   // Compute the field
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
-    for( int i = 0; i < Nxy; ++i ) {
+    for( int ixy = 0; ixy < Nxy; ++ixy ) {
         single Mprime[3];
-        LLG( Mprime, sp, &Mnext[i*3], &H[i*3] );
-        slope[i*3+0] += Mprime[0] / 6.0;
-        slope[i*3+1] += Mprime[1] / 6.0;
-        slope[i*3+2] += Mprime[2] / 6.0;
+        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
+        slope[ixy*3+0] += Mprime[0] / 6.0;
+        slope[ixy*3+1] += Mprime[1] / 6.0;
+        slope[ixy*3+2] += Mprime[2] / 6.0;
         /* Fianlly advance to the next time instant */
-        Mnext[i*3+0] = M[i*3+0] + slope[i*3+0] * sp.dt;
-        Mnext[i*3+1] = M[i*3+1] + slope[i*3+1] * sp.dt;
-        Mnext[i*3+2] = M[i*3+2] + slope[i*3+2] * sp.dt;
-        /* re-normalize the M vectors */
-        if(sp.preserveNorm)
-            reNormalize(&Mnext[i*3], sp);
+        Mnext[ixy*3+0] = M[ixy*3+0] + slope[ixy*3+0] * sp.dt;
+        Mnext[ixy*3+1] = M[ixy*3+1] + slope[ixy*3+1] * sp.dt;
+        Mnext[ixy*3+2] = M[ixy*3+2] + slope[ixy*3+2] * sp.dt;
+        /* compensate the M vector after update */
+        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
     }
     /* clean-up */
     free(H);
@@ -301,15 +314,10 @@ simParam parseSimParam( const mxArray *spIn )
         .Nx = mxGetScalar(mxGetField(spIn, 0, "Nx")),
         .dy = mxGetScalar(mxGetField(spIn, 0, "dy")),
         .dx = mxGetScalar(mxGetField(spIn, 0, "dx")),
+        .numM = mxGetScalar(mxGetField(spIn, 0, "numM")),
 
-        .Ms = mxGetScalar(mxGetField(spIn, 0, "Ms")),
-        .gamma = mxGetScalar(mxGetField(spIn, 0, "gamma")),
-        .alpha = mxGetScalar(mxGetField(spIn, 0, "alpha")),
-        .Aexch = mxGetScalar(mxGetField(spIn, 0, "Aexch")),
-        .Kanis = mxGetScalar(mxGetField(spIn, 0, "Kanis")),
-        .anisVec = (single*)mxGetData(mxGetField(spIn, 0, "anisVec")),
-        .couplVec = (single*)mxGetData(mxGetField(spIn, 0, "couplVec")),
-        .demagVec = (single*)mxGetData(mxGetField(spIn, 0, "demagVec")),
+        .P   = (single*)mxGetData(mxGetField(spIn, 0, "P")),
+        .Pxy = (single*)mxGetData(mxGetField(spIn, 0, "Pxy")),
 
         .bcMtop = (single*)mxGetData( mxGetField(bc, 0, "Mtop") ),
         .bcMbot = (single*)mxGetData( mxGetField(bc, 0, "Mbot") ),
@@ -324,15 +332,14 @@ simParam parseSimParam( const mxArray *spIn )
 }
 
 
-
 /*  The gateway routine */
 void mexFunction( int nlhs, mxArray *plhs[],
                   int nrhs, const mxArray *prhs[] )
 {
     /* Validate the inputs and outputs */
-    if(nrhs!=3)
+    if(nrhs!=2)
         mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:invalidNumInputs",
-                "Three inputs required.");
+                "Two inputs required.");
     else if(nlhs > 1)
         mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:maxlhs",
                 "Too many output arguments.");
@@ -340,21 +347,16 @@ void mexFunction( int nlhs, mxArray *plhs[],
     /* Check for proper inputs */
     const mxArray *spIn = prhs[0];
     const mxArray *MIn = prhs[1];
-    const mxArray *HextIn = prhs[2];
     if(!mxIsStruct(spIn))
         mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotStruct",
                 "First input (sp) must be a structure.");
     else if(!mxIsSingle(MIn) || mxGetNumberOfDimensions(MIn) != 3)
         mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotDouble",
                 "Second input (M) must be a 3-D array of class single.");
-    else if(!mxIsSingle(HextIn) || mxGetNumberOfDimensions(HextIn) != 3)
-        mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotDouble",
-                "Third input (HextIn) must be a 3-D array of class single.");
 
     /* Assign the inputs */
     simParam sp = parseSimParam( spIn );
     single *M = mxGetData( MIn );
-    single *Hext = mxGetData( HextIn );
 
     /* Create output array */
     const mwSize *dims = mxGetDimensions(MIn);
@@ -365,9 +367,9 @@ void mexFunction( int nlhs, mxArray *plhs[],
 
     /* Invoke the computation */
     if( sp.useRK4 )
-        rk4Step( Mnext, sp, M, Hext );
+        rk4Step( Mnext, sp, M );
     else
-        eulerStep( Mnext, sp, M, Hext );
+        eulerStep( Mnext, sp, M );
 
     /* Return the output array */
     plhs[0] = MnextOut;

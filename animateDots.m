@@ -3,10 +3,11 @@ fprintf('Animating %d timepoints... ', sp.Nt);
 doQuiver = 0;
 
 %% Normalize M
-mz = squeeze(M(3,:,:,:)) / sp.Ms;
+Ms = sp.P(1);
+mz = squeeze(M(3,:,:,:)) / Ms;
 if doQuiver
-    mx = squeeze(M(1,:,:,:)) / sp.Ms;
-    my = squeeze(M(2,:,:,:)) / sp.Ms;
+    mx = squeeze(M(1,:,:,:)) / Ms;
+    my = squeeze(M(2,:,:,:)) / Ms;
 end
 
 clf;
@@ -35,7 +36,7 @@ if doQuiver
 end
 
 
-for i = 1:40:sp.Nt
+for i = 1:200:sp.Nt % default is 40
     set(ih, 'cdata', double(mz(:,:,i)));
     set(ith, 'string', ['m_z(n = ', num2str(i), ')']);
     if doQuiver

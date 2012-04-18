@@ -1,4 +1,4 @@
-function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
+function [success,sp,M] = validateSimParam(sp,M)
 
     success = 1;
 
@@ -23,18 +23,18 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     spDefault.dy = single(100e-9);
     spDefault.dx = single(100e-9);
     % material parametrs
-    spDefault.Ms = single(8.6e5);
-    spDefault.gamma = single(2.21e5);
-    spDefault.alpha = single(0.05);
-    spDefault.Aexch = single(1.3e-11);
-    spDefault.Kanis = 1e5;
-    spDefault.anisVec = [0 0 1];
-    spDefault.couplVec = single([-.2 -.2 -.2]);
-    spDefault.demagVec = single([.4 .4 .2]);
+    %spDefault.Ms = single(8.6e5);
+    %spDefault.gamma = single(2.21e5);
+    %spDefault.alpha = single(0.05);
+    %spDefault.Aexch = single(1.3e-11);
+    %spDefault.Kanis = 1e5;
+    %spDefault.anisVec = [0 0 1];
+    %spDefault.couplVec = single([-.2 -.2 -.2]);
+    %spDefault.demagVec = single([.4 .4 .2]);
     % ODE Solver selection
     spDefault.useGPU = int32(0);
     spDefault.useRK4 = int32(0);
-    spDefault.preserveNorm = int32(1);
+    %spDefault.preserveNorm = int32(1);
     % Boundary condition defaults to ZERO
     spDefault.boundCond.Mtop = single(zeros(3,sp.Nx));    % +x top
     spDefault.boundCond.Mbot = single(zeros(3,sp.Nx));    % -x bottom
@@ -64,28 +64,28 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
         sp.Nt = int32(length(sp.t));
     end
 
-    % sanity check for sp.Aexch, sp.Kanis, sp.anisVec, sp.couplVec and sp.demagVec
-    if (length(sp.Aexch) ~= 1)
-        fprintf('ERROR: sp.Aexch must be a scalar!\n');
-        success = 0;
-        return;
-    elseif (length(sp.Kanis) ~= 1)
-        fprintf('ERROR: sp.Kanis must be a scalar!\n');
-        success = 0;
-        return;
-    elseif (length(sp.anisVec) ~= 3)
-        fprintf('ERROR: sp.anisVec must contain exactly 3 elements!\n');
-        success = 0;
-        return;
-    elseif (length(sp.couplVec) ~= 3)
-        fprintf('ERROR: sp.couplVec must contain exactly 3 elements!\n');
-        success = 0;
-        return;
-    elseif (length(sp.demagVec) ~= 3)
-        fprintf('ERROR: sp.demagVec must contain exactly 3 elements!\n');
-        success = 0;
-        return;
-    end
+    %% sanity check for sp.Aexch, sp.Kanis, sp.anisVec, sp.couplVec and sp.demagVec
+    %if (length(sp.Aexch) ~= 1)
+        %fprintf('ERROR: sp.Aexch must be a scalar!\n');
+        %success = 0;
+        %return;
+    %elseif (length(sp.Kanis) ~= 1)
+        %fprintf('ERROR: sp.Kanis must be a scalar!\n');
+        %success = 0;
+        %return;
+    %elseif (length(sp.anisVec) ~= 3)
+        %fprintf('ERROR: sp.anisVec must contain exactly 3 elements!\n');
+        %success = 0;
+        %return;
+    %elseif (length(sp.couplVec) ~= 3)
+        %fprintf('ERROR: sp.couplVec must contain exactly 3 elements!\n');
+        %success = 0;
+        %return;
+    %elseif (length(sp.demagVec) ~= 3)
+        %fprintf('ERROR: sp.demagVec must contain exactly 3 elements!\n');
+        %success = 0;
+        %return;
+    %end
 
     % sanity check for boundary conditions
     if( length(sp.boundCond.Mtop) ~= sp.Nx ) || ...
@@ -117,29 +117,24 @@ function [success,sp,M,Hext] = validateSimParam(sp,M,Hext)
     sp.Nx = int32(sp.Nx);
     sp.dy = single(sp.dy);
     sp.dx = single(sp.dx);
-    sp.Ms = single(sp.Ms);
-    sp.gamma = single(sp.gamma);
-    sp.alpha = single(sp.alpha);
-    sp.Aexch = single(sp.Aexch);
-    sp.Kanis = single(sp.Kanis);
-    sp.anisVec = single(sp.anisVec);
-    sp.couplVec = single(sp.couplVec);
-    sp.demagVec = single(sp.demagVec);
+    %sp.Ms = single(sp.Ms);
+    %sp.gamma = single(sp.gamma);
+    %sp.alpha = single(sp.alpha);
+    %sp.Aexch = single(sp.Aexch);
+    %sp.Kanis = single(sp.Kanis);
+    %sp.anisVec = single(sp.anisVec);
+    %sp.couplVec = single(sp.couplVec);
+    %sp.demagVec = single(sp.demagVec);
     sp.useRK4 = int32(sp.useRK4);
     sp.useGPU = int32(sp.useGPU);
     sp.boundCond.Mtop = single(sp.boundCond.Mtop);
     sp.boundCond.Mbot = single(sp.boundCond.Mbot);
     sp.boundCond.Mrig = single(sp.boundCond.Mrig);
     sp.boundCond.Mlef = single(sp.boundCond.Mlef);
-    % M(r,t) and Hext(r,t) bulky arrays
+    % M(r,t) is a bulky array
     if strcmp(class(M), 'single') == 0
         fprintf('INFO: converting M to single precision... ');
         M = single(M);
-        fprintf('done\n');
-    end
-    if strcmp(class(Hext), 'single') == 0
-        fprintf('INFO: converting Hext to single precision... ');
-        Hext = single(Hext);
         fprintf('done\n');
     end
 end
