@@ -2,12 +2,12 @@ fprintf('Animating %d timepoints... ', sp.Nt);
 
 doQuiver = 0;
 
-%% Normalize M
+%% Normalize S
 Ms = sp.P(1);
-mz = squeeze(M(3,:,:,:)) / Ms;
+mz = squeeze(S(3,:,:,:)) / Ms;
 if doQuiver
-    mx = squeeze(M(1,:,:,:)) / Ms;
-    my = squeeze(M(2,:,:,:)) / Ms;
+    mx = squeeze(S(1,:,:,:)) / Ms;
+    my = squeeze(S(2,:,:,:)) / Ms;
 end
 
 clf;

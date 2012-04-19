@@ -1,4 +1,4 @@
-function [success,sp,M] = validateSimParam(sp,M)
+function [success,sp,S] = validateSimParam(sp,S)
 
     success = 1;
 
@@ -23,23 +23,19 @@ function [success,sp,M] = validateSimParam(sp,M)
     spDefault.dy = single(100e-9);
     spDefault.dx = single(100e-9);
     % material parametrs
-    %spDefault.Ms = single(8.6e5);
-    %spDefault.gamma = single(2.21e5);
-    %spDefault.alpha = single(0.05);
-    %spDefault.Aexch = single(1.3e-11);
-    %spDefault.Kanis = 1e5;
-    %spDefault.anisVec = [0 0 1];
-    %spDefault.couplVec = single([-.2 -.2 -.2]);
-    %spDefault.demagVec = single([.4 .4 .2]);
+    spDefault.Ns = int32(1);                        % numer of state variables at each mesh point
+    spDefault.P = single(zeros(1,1));               % Paramters that are uniform over the mesh
+    spDefault.Pxy = single(zeros(1, sp.Ny,sp.Nx));  % Paramters that vary over the mesh
+    spDefault.Np = length(sp.P);         % numer of spatially uniform paramters
+    spDefault.Npxy = size(sp.Pxy, 1);    % numer of spatially varying paramters
     % ODE Solver selection
-    spDefault.useGPU = int32(0);
     spDefault.useRK4 = int32(0);
-    %spDefault.preserveNorm = int32(1);
+    spDefault.useGPU = int32(0);
     % Boundary condition defaults to ZERO
-    spDefault.boundCond.Mtop = single(zeros(3,sp.Nx));    % +x top
-    spDefault.boundCond.Mbot = single(zeros(3,sp.Nx));    % -x bottom
-    spDefault.boundCond.Mrig = single(zeros(3,sp.Ny));    % +y right
-    spDefault.boundCond.Mlef = single(zeros(3,sp.Ny));    % -y left
+    spDefault.boundCond.S_top = single(zeros(spDefault.Ns,sp.Nx));    % +x top
+    spDefault.boundCond.S_bot = single(zeros(spDefault.Ns,sp.Nx));    % -x bottom
+    spDefault.boundCond.S_rig = single(zeros(spDefault.Ns,sp.Ny));    % +y right
+    spDefault.boundCond.S_lef = single(zeros(spDefault.Ns,sp.Ny));    % -y left
 
 
 %===============================================================================
@@ -64,45 +60,15 @@ function [success,sp,M] = validateSimParam(sp,M)
         sp.Nt = int32(length(sp.t));
     end
 
-    %% sanity check for sp.Aexch, sp.Kanis, sp.anisVec, sp.couplVec and sp.demagVec
-    %if (length(sp.Aexch) ~= 1)
-        %fprintf('ERROR: sp.Aexch must be a scalar!\n');
-        %success = 0;
-        %return;
-    %elseif (length(sp.Kanis) ~= 1)
-        %fprintf('ERROR: sp.Kanis must be a scalar!\n');
-        %success = 0;
-        %return;
-    %elseif (length(sp.anisVec) ~= 3)
-        %fprintf('ERROR: sp.anisVec must contain exactly 3 elements!\n');
-        %success = 0;
-        %return;
-    %elseif (length(sp.couplVec) ~= 3)
-        %fprintf('ERROR: sp.couplVec must contain exactly 3 elements!\n');
-        %success = 0;
-        %return;
-    %elseif (length(sp.demagVec) ~= 3)
-        %fprintf('ERROR: sp.demagVec must contain exactly 3 elements!\n');
-        %success = 0;
-        %return;
-    %end
-
     % sanity check for boundary conditions
-    if( length(sp.boundCond.Mtop) ~= sp.Nx ) || ...
-            ( length(sp.boundCond.Mbot) ~= sp.Nx ) || ...
-            ( length(sp.boundCond.Mrig) ~= sp.Ny ) || ...
-            ( length(sp.boundCond.Mlef) ~= sp.Ny )
+    if( size(sp.boundCond.S_top, 2) ~= sp.Nx ) || ...
+            ( size(sp.boundCond.S_bot, 2) ~= sp.Nx ) || ...
+            ( size(sp.boundCond.S_rig, 2) ~= sp.Ny ) || ...
+            ( size(sp.boundCond.S_lef, 2) ~= sp.Ny )
         fprintf('ERROR: Size of sp.boundCond does not match that of the number of dots!\n');
         success = 0;
         return;
     end
-
-    %if ~fieldExists(sp,'Ms')
-        %sp.Ms = spDefault.Ms;
-    %elseif sp.Ms == 0
-        %fprintf('Ms cannot have a value of %g [A/m]\n', sp.Ms);
-        %success = 0;
-    %end
 
 
 %===============================================================================
@@ -117,24 +83,21 @@ function [success,sp,M] = validateSimParam(sp,M)
     sp.Nx = int32(sp.Nx);
     sp.dy = single(sp.dy);
     sp.dx = single(sp.dx);
-    %sp.Ms = single(sp.Ms);
-    %sp.gamma = single(sp.gamma);
-    %sp.alpha = single(sp.alpha);
-    %sp.Aexch = single(sp.Aexch);
-    %sp.Kanis = single(sp.Kanis);
-    %sp.anisVec = single(sp.anisVec);
-    %sp.couplVec = single(sp.couplVec);
-    %sp.demagVec = single(sp.demagVec);
+    sp.Ns = int32(sp.Ns);
+    sp.Np = int32(sp.Np);
+    sp.Npxy = int32(sp.Npxy);
+    sp.P = single(sp.P);
+    sp.Pxy = single(sp.Pxy);
     sp.useRK4 = int32(sp.useRK4);
     sp.useGPU = int32(sp.useGPU);
-    sp.boundCond.Mtop = single(sp.boundCond.Mtop);
-    sp.boundCond.Mbot = single(sp.boundCond.Mbot);
-    sp.boundCond.Mrig = single(sp.boundCond.Mrig);
-    sp.boundCond.Mlef = single(sp.boundCond.Mlef);
-    % M(r,t) is a bulky array
-    if strcmp(class(M), 'single') == 0
-        fprintf('INFO: converting M to single precision... ');
-        M = single(M);
+    sp.boundCond.S_top = single(sp.boundCond.S_top);
+    sp.boundCond.S_bot = single(sp.boundCond.S_bot);
+    sp.boundCond.S_rig = single(sp.boundCond.S_rig);
+    sp.boundCond.S_lef = single(sp.boundCond.S_lef);
+    % S(r,t) is a bulky array. convert only if not already single
+    if strcmp(class(S), 'single') == 0
+        fprintf('INFO: converting S to single precision... ');
+        S = single(S);
         fprintf('done\n');
     end
 end

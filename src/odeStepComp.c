@@ -24,310 +24,214 @@ typedef struct {
     single dt;
     int Nt, Ny, Nx;
     single dy, dx;
-    int numM;
+    int Ns, Np, Npxy;
     single *P;
     single *Pxy;
     single *bcMtop, *bcMbot, *bcMrig, *bcMlef;
-    int useRK4, useGPU, preserveNorm;
+    int useRK4, useGPU;
 } simParam;
 
 
-/*! Re-normalize the M vector */
-void reNormalize(single *M, const simParam sp) {
-    single Ms = sp.P[0];
-    single magnitude = sqrt( M[0]*M[0] + M[1]*M[1] + M[2]*M[2] );
-    M[0] *= Ms / magnitude;
-    M[1] *= Ms / magnitude;
-    M[2] *= Ms / magnitude;
-}
-
-
-/*! Compensate the M vector */
-void compensateM(single *M, single *Mprev, int ixy, const simParam sp) {
-    if(sp.preserveNorm)
-        reNormalize(M, sp);
-    // check for frozen locations
-    int frozen = (int)sp.Pxy[0*sp.Ny*sp.Nx + ixy];
-    if(frozen) {
-        M[0] = Mprev[0];
-        M[1] = Mprev[1];
-        M[2] = Mprev[2];
-    }
-}
-
-
-/*! Evaluates the slopes from the vector differential equation.
- *  \param Mprime Return pointer for computed dM/dt vector
+/* IMPORTANT: Don't mess with this function!!! Just use it */
+/*! Picks the correct neighbors based on the location
+ *      Picks the neighbor if exists otherwise pick the corresponding boundary condition
+ *  \param S_top Return pointer for top neighbor vector
+ *  \param S_bot Return pointer for bottom neighbor vector
+ *  \param S_rig Return pointer for right neighbor vector
+ *  \param S_lef Return pointer for left neighbor vector
+ *  \param S State vector
  *  \param sp Simulation parameters
- *  \param M Magnetization vector
- *  \param H Field vector acting on M */
-void differentiateM( single *Mprime, int ixy, simParam sp, single *M, single *H )
+ *  \param ix index number on x-axis
+ *  \param iy index number on y-axis */
+void pickNeighbors( single **S_top, single **S_bot, single **S_rig, single **S_lef,
+                    single *S, simParam sp, int ix, int iy )
 {
-    single Ms = sp.P[0];
-    single gamma = sp.P[1];
-    single alpha = sp.Pxy[1*sp.Ny*sp.Nx + ixy];
-    Mprime[0] = -gamma * (M[1]*H[2]-M[2]*H[1]) - (alpha*gamma/Ms) * ( M[0]*(M[1]*H[1]+M[2]*H[2]) - H[0]*(M[1]*M[1]+M[2]*M[2]) );
-    Mprime[1] = -gamma * (M[2]*H[0]-M[0]*H[2]) - (alpha*gamma/Ms) * ( M[1]*(M[2]*H[2]+M[0]*H[0]) - H[1]*(M[2]*M[2]+M[0]*M[0]) );
-    Mprime[2] = -gamma * (M[0]*H[1]-M[1]*H[0]) - (alpha*gamma/Ms) * ( M[2]*(M[0]*H[0]+M[1]*H[1]) - H[2]*(M[0]*M[0]+M[1]*M[1]) );
+    /* Here, top means maximum iy coordinate, not the first matrix row
+     *       This code follows xy-coordinate axes convention */
+    // if at top-most row, use top boundary condition
+    *S_top = (iy == sp.Ny-1)  ?  &sp.bcMtop[ix*sp.Ns]  :  &S[(iy+1)*sp.Ns+ ix   *sp.Ny*sp.Ns]; // +y (wrt to xy-cood axes)
+    // if at bottom-most row, use bottom boundary condition
+    *S_bot = (iy == 0)        ?  &sp.bcMbot[ix*sp.Ns]  :  &S[(iy-1)*sp.Ns+ ix   *sp.Ny*sp.Ns]; // -y (wrt to xy-cood axes)
+    // if at right-most column, use right boundary condition
+    *S_rig = (ix == sp.Nx-1)  ?  &sp.bcMrig[iy*sp.Ns]  :  &S[ iy   *sp.Ns+(ix+1)*sp.Ny*sp.Ns]; // +x
+    // if at left-most column, use left boundary condition
+    *S_lef = (ix == 0)        ?  &sp.bcMlef[iy*sp.Ns]  :  &S[ iy   *sp.Ns+(ix-1)*sp.Ny*sp.Ns]; // -x
 }
 
 
-/*! Calculates the effictive H-field caused by several phenomena.
- *  \param H Return pointer for total effective field
- *  \param sp Simulation parameters
- *  \param M Current state
- *  \param Hext Current external field */
-void Hfield( single *H, simParam sp, single *M )
-{
-    /* TODO: Maybe some optimization room in this function */
-    const single mu0 = 4*M_PI*1e-7;   // Vacuum permeability in SI units [N/A^2]
-    int Nxy = sp.Ny * sp.Nx;    // size of array
-
-    /* Start with the external field */
-    // memcpy(H, Hext, 3*Nxy*sizeof(single));
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single HextX = sp.Pxy[2*sp.Ny*sp.Nx + ixy];
-        single HextY = sp.Pxy[3*sp.Ny*sp.Nx + ixy];
-        single HextZ = sp.Pxy[4*sp.Ny*sp.Nx + ixy];
-        H[ixy*3+0] = HextX;
-        H[ixy*3+1] = HextY;
-        H[ixy*3+2] = HextZ;
-    }
-
-    /* Add demagnetization field (interaction only with itself) */
-    single demagX = sp.P[11];
-    single demagY = sp.P[12];
-    single demagZ = sp.P[13];
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        H[ixy*3+0] += -demagX * M[ixy*3+0];
-        H[ixy*3+1] += -demagY * M[ixy*3+1];
-        H[ixy*3+2] += -demagZ * M[ixy*3+2];
-    }
-
-    /* Add anisotropy field (interaction only with itself) */
-    single Ms = sp.P[0];
-    single Kanis = sp.P[4];
-    single anisX = sp.P[5];
-    single anisY = sp.P[6];
-    single anisZ = sp.P[7];
-    const single anisConstant = 2.0 * Kanis / (mu0 * Ms*Ms);
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        // single Mdotk = dot(&M[ixy*3], sp.anisVec);
-        single Mdotk = M[ixy*3+0]*anisX + M[ixy*3+1]*anisY + M[ixy*3+2]*anisZ;
-        H[ixy*3+0] += anisConstant * Mdotk * anisX;
-        H[ixy*3+1] += anisConstant * Mdotk * anisY;
-        H[ixy*3+2] += anisConstant * Mdotk * anisZ;
-    }
-
-    /* Add exchange and coupling fields from nearest neighbours
-     * Iterate over all the dots in column-major-order
-     * since the data is coming from MATLAB
-     * This step is most time consuming (bottleneck) */
-    single Aexch = sp.P[3];
-    single couplX = sp.P[8];
-    single couplY = sp.P[9];
-    single couplZ = sp.P[10];
-    const single exchangeConstant = 2.0 * Aexch / (mu0 * Ms*Ms);
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int x = 0; x < sp.Nx; ++x ) {
-        for( int y = 0; y < sp.Ny; ++y ) {
-            /* DONE: Very clearly document that top means maximum y coordinate amd not first matrix row
-             *       This code follows xy-coordinate axes convention */
-            single *Mtop, *Mbot, *Mrig, *Mlef;
-            single *M0 = &M[y*3 + x*sp.Ny*3];   // itself
-            /* Pick neighbours */
-            // if at top-most row, use top boundary condition
-            Mtop = (y == sp.Ny-1) ? &sp.bcMtop[x*3] :
-                                    &M[ (y+1)*3+ x   *sp.Ny*3 ]; // +y (wrt to xy-cood axes)
-            // if at bottom-most row, use bottom boundary condition
-            Mbot = (y == 0)       ? &sp.bcMbot[x*3] :
-                                    &M[ (y-1)*3+ x   *sp.Ny*3 ]; // -y (wrt to xy-cood axes)
-            // if at right-most column, use right boundary condition
-            Mrig = (x == sp.Nx-1) ? &sp.bcMrig[y*3] :
-                                    &M[  y   *3+(x+1)*sp.Ny*3 ]; // +x
-            // if at left-most column, use left boundary condition
-            Mlef = (x == 0)       ? &sp.bcMlef[y*3] :
-                                    &M[  y   *3+(x-1)*sp.Ny*3 ]; // -x
-            /* Laplacian */
-            single L_Mx = (Mrig[0] - 2*M0[0] + Mlef[0]) / (sp.dx*sp.dx) +
-                          (Mtop[0] - 2*M0[0] + Mbot[0]) / (sp.dy*sp.dy);
-            single L_My = (Mrig[1] - 2*M0[1] + Mlef[1]) / (sp.dx*sp.dx) +
-                          (Mtop[1] - 2*M0[1] + Mbot[1]) / (sp.dy*sp.dy);
-            single L_Mz = (Mrig[2] - 2*M0[2] + Mlef[2]) / (sp.dx*sp.dx) +
-                          (Mtop[2] - 2*M0[2] + Mbot[2]) / (sp.dy*sp.dy);
-            /* Now add these two field componets */
-            H[y*3+x*sp.Ny*3+0] += exchangeConstant * L_Mx
-                    + couplX * (Mtop[0] + Mbot[0] + Mrig[0] + Mlef[0]);
-            H[y*3+x*sp.Ny*3+1] += exchangeConstant * L_My
-                    + couplY * (Mtop[1] + Mbot[1] + Mrig[1] + Mlef[1]);
-            H[y*3+x*sp.Ny*3+2] += exchangeConstant * L_Mz
-                    + couplZ * (Mtop[2] + Mbot[2] + Mrig[2] + Mlef[2]);
-        }
-    }
-}
+/* Including the user defined source file containing the model */
+#include "modelingEquations.c"
 
 
 /*! Takes one ODE step by Euler's method.
- *  \param Mnext State at the next time instant
+ *  \param Snext State at the next time instant
  *  \param sp Simulation parameters
- *  \param M Current state
- *  \param Hext Current external field */
-void eulerStep( single *Mnext, simParam sp, single *M )
+ *  \param S Current state */
+void eulerStep( single *Snext, single *S, simParam sp )
 {
     int Nxy = sp.Ny * sp.Nx;    // size of array
-    /* Compute the field */
-    /* Allocate memory for as many auxiliary H-fields as necessary */
-    single *H = (single*)calloc( sp.numM*Nxy, sizeof(single) ); // only 1 here
-    Hfield( H, sp, M );
+    /* Allocate memory for Sprime vector field */
+    single *Sprime = (single*)calloc( sp.Ns*Nxy, sizeof(single) );
+    /* Calculate the slopes by executing differential equations */
+    differentiateStateVectorField( Sprime, S, sp );
     /* Advance to the next time instant */
     #ifdef _OPENMP
     #pragma omp parallel for
     #endif
     for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single Mprime[3];
-        differentiateM( Mprime, ixy, sp, &M[ixy*3], &H[ixy*3] );
-        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * sp.dt;
-        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * sp.dt;
-        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * sp.dt;
-        /* compensate the M vector after update */
-        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
+        int i = ixy*sp.Ns;
+        Snext[i+0] = S[i+0] + Sprime[i+0] * sp.dt;
+        Snext[i+1] = S[i+1] + Sprime[i+1] * sp.dt;
+        Snext[i+2] = S[i+2] + Sprime[i+2] * sp.dt;
+        /* compensate the Snext vector after update */
+        compensateStateVector(&Snext[i], &S[i], sp, ixy);
     }
     /* clean-up */
-    free(H);
+    // must deallocate all the reserved memory, otherwise huge performance penalty!!!
+    free(Sprime);
 }
 
-/* TODO: RK4 is messed up. Priority */
 /*! Takes one ODE step by Runge-Kutta's 4th order method.
- *  \param Mnext State at the next time instant
+ *  \param Snext State at the next time instant
  *  \param sp Simulation parameters
- *  \param M Current state
- *  \param Hext Current external field */
-void rk4Step( single *Mnext, simParam sp, single *M )
+ *  \param S Current state */
+void rk4Step( single *Snext, single *S, simParam sp )
 {
-    /* allocate memory for field and slope values */
-    /* TODO: Calloc not necessary */
     int Nxy = sp.Ny * sp.Nx;    // size of array
-    single *H = (single*)calloc( sp.numM*Nxy, sizeof(single) );
-    single *slope = (single*)calloc( sp.numM*Nxy, sizeof(single) );
-    /* For k1  */
-    Hfield( H, sp, M );   // Compute the field
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single Mprime[3];
-        differentiateM( Mprime, ixy, sp, &M[ixy*3], &H[ixy*3] );
-        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * .5*sp.dt;
-        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * .5*sp.dt;
-        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * .5*sp.dt;
-        /* compensate the M vector after update */
-        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
-        slope[ixy*3+0] = Mprime[0] / 6.0;
-        slope[ixy*3+1] = Mprime[1] / 6.0;
-        slope[ixy*3+2] = Mprime[2] / 6.0;
+    /* Allocate memory for Sprime and cumulative-slope vector field */
+    single *Sprime = (single*)calloc( sp.Ns*Nxy, sizeof(single) );
+    single *slope = (single*)calloc( sp.Ns*Nxy, sizeof(single) );
+
+    /* k1: Calculate the slopes by executing differential equations */
+    {
+        single *k1 = Sprime;    // k1 <= Sprime (just a reference. Memory is still allocated only once)
+        differentiateStateVectorField( k1, S, sp );
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
+        for( int ixy = 0; ixy < Nxy; ++ixy ) {
+            int i = ixy*sp.Ns;
+            /* Advance half the step by k1 */
+            Snext[i+0] = S[i+0] + k1[i+0] * .5*sp.dt;
+            Snext[i+1] = S[i+1] + k1[i+1] * .5*sp.dt;
+            Snext[i+2] = S[i+2] + k1[i+2] * .5*sp.dt;
+            /* Compensate the Snext vector after update */
+            compensateStateVector(&Snext[i], &S[i], sp, ixy);
+            /* Initialize the cumulative slope by k1/6 */
+            slope[i+0] = k1[i+0] / 6.0;
+            slope[i+1] = k1[i+1] / 6.0;
+            slope[i+2] = k1[i+2] / 6.0;
+        }
     }
-    /* For k2 */
-    /* TODO: small error because not interpolating Hext(t+dt/2) */
-    Hfield( H, sp, Mnext );   // Compute the field
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single Mprime[3];
-        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
-        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * .5*sp.dt;
-        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * .5*sp.dt;
-        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * .5*sp.dt;
-        /* compensate the M vector after update */
-        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
-        slope[ixy*3+0] += Mprime[0] / 3.0;
-        slope[ixy*3+1] += Mprime[1] / 3.0;
-        slope[ixy*3+2] += Mprime[2] / 3.0;
+    /* k2: Calculate the slopes by executing differential equations */
+    {
+        single *k2 = Sprime;    // k2 <= Sprime (just a reference. Memory is still allocated only once)
+        differentiateStateVectorField( k2, Snext, sp );
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
+        for( int ixy = 0; ixy < Nxy; ++ixy ) {
+            int i = ixy*sp.Ns;
+            /* Advance half the step by k2 */
+            Snext[i+0] = S[i+0] + k2[i+0] * .5*sp.dt;
+            Snext[i+1] = S[i+1] + k2[i+1] * .5*sp.dt;
+            Snext[i+2] = S[i+2] + k2[i+2] * .5*sp.dt;
+            /* Compensate the Snext vector after update */
+            compensateStateVector(&Snext[i], &S[i], sp, ixy);
+            /* Update the cumulative slope by adding k2/3 */
+            slope[i+0] += k2[i+0] / 3.0;
+            slope[i+1] += k2[i+1] / 3.0;
+            slope[i+2] += k2[i+2] / 3.0;
+        }
     }
-    /* For k3 */
-    /* TODO: small error because not interpolating Hext(t+dt/2) */
-    Hfield( H, sp, Mnext );   // Compute the field
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single Mprime[3];
-        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
-        Mnext[ixy*3+0] = M[ixy*3+0] + Mprime[0] * sp.dt;
-        Mnext[ixy*3+1] = M[ixy*3+1] + Mprime[1] * sp.dt;
-        Mnext[ixy*3+2] = M[ixy*3+2] + Mprime[2] * sp.dt;
-        /* compensate the M vector after update */
-        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
-        slope[ixy*3+0] += Mprime[0] / 3.0;
-        slope[ixy*3+1] += Mprime[1] / 3.0;
-        slope[ixy*3+2] += Mprime[2] / 3.0;
+    /* k3: Calculate the slopes by executing differential equations */
+    {
+        single *k3 = Sprime;    // k3 <= Sprime (just a reference. Memory is still allocated only once)
+        differentiateStateVectorField( k3, Snext, sp );
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
+        for( int ixy = 0; ixy < Nxy; ++ixy ) {
+            int i = ixy*sp.Ns;
+            /* Advance the full step by k3 */
+            Snext[i+0] = S[i+0] + k3[i+0] * sp.dt;
+            Snext[i+1] = S[i+1] + k3[i+1] * sp.dt;
+            Snext[i+2] = S[i+2] + k3[i+2] * sp.dt;
+            /* Compensate the Snext vector after update */
+            compensateStateVector(&Snext[i], &S[i], sp, ixy);
+            /* Update the cumulative slope by adding k3/3 */
+            slope[i+0] += k3[i+0] / 3.0;
+            slope[i+1] += k3[i+1] / 3.0;
+            slope[i+2] += k3[i+2] / 3.0;
+        }
     }
-    /* For k4 */
-    Hfield( H, sp, Mnext );   // Compute the field
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for( int ixy = 0; ixy < Nxy; ++ixy ) {
-        single Mprime[3];
-        differentiateM( Mprime, ixy, sp, &Mnext[ixy*3], &H[ixy*3] );
-        slope[ixy*3+0] += Mprime[0] / 6.0;
-        slope[ixy*3+1] += Mprime[1] / 6.0;
-        slope[ixy*3+2] += Mprime[2] / 6.0;
-        /* Fianlly advance to the next time instant */
-        Mnext[ixy*3+0] = M[ixy*3+0] + slope[ixy*3+0] * sp.dt;
-        Mnext[ixy*3+1] = M[ixy*3+1] + slope[ixy*3+1] * sp.dt;
-        Mnext[ixy*3+2] = M[ixy*3+2] + slope[ixy*3+2] * sp.dt;
-        /* compensate the M vector after update */
-        compensateM(&Mnext[ixy*3], &M[ixy*3], ixy, sp);
+    /* k4: Calculate the slopes by executing differential equations */
+    {
+        single *k4 = Sprime;    // k4 <= Sprime (just a reference. Memory is still allocated only once)
+        differentiateStateVectorField( k4, Snext, sp );
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
+        for( int ixy = 0; ixy < Nxy; ++ixy ) {
+            int i = ixy*sp.Ns;
+            /* Complete the cumulative slope by finally adding k4/6 */
+            slope[i+0] += k4[i+0] / 6.0;
+            slope[i+1] += k4[i+1] / 6.0;
+            slope[i+2] += k4[i+2] / 6.0;
+            /* Advance the full step by cumulative skope for the next time instant */
+            Snext[i+0] = S[i+0] + slope[i+0] * sp.dt;
+            Snext[i+1] = S[i+1] + slope[i+1] * sp.dt;
+            Snext[i+2] = S[i+2] + slope[i+2] * sp.dt;
+            /* Compensate the Snext vector after final update */
+            compensateStateVector(&Snext[i], &S[i], sp, ixy);
+        }
     }
+
     /* clean-up */
-    free(H);
+    // must deallocate all the reserved memory, otherwise huge performance penalty!!!
+    free(Sprime);
     free(slope);
 }
 
 
 /*! Converts Matlab's simParam structure to an equivalent C structure.
- *  \param spIn Matlab's version of structure
+ *  \param sp_in Matlab's version of structure
  *  \return Equivalent C structure */
-simParam parseSimParam( const mxArray *spIn )
+simParam parseSimParam( const mxArray *sp_in )
 {
     /* get the pointer to the nested boundary-condition structure */
-    mxArray *bc = mxGetField(spIn, 0, "boundCond");
-    single *bcMtop = (single*)mxGetData( mxGetField(bc, 0, "Mtop") );
+    mxArray *bc = mxGetField(sp_in, 0, "boundCond");
+    single *bcMtop = (single*)mxGetData( mxGetField(bc, 0, "S_top") );
 
     /* fill up the sp structure */
     simParam sp = {
-        .dt = mxGetScalar(mxGetField(spIn, 0, "dt")),
-        .Nt = mxGetScalar(mxGetField(spIn, 0, "Nt")),
-        .Ny = mxGetScalar(mxGetField(spIn, 0, "Ny")),
-        .Nx = mxGetScalar(mxGetField(spIn, 0, "Nx")),
-        .dy = mxGetScalar(mxGetField(spIn, 0, "dy")),
-        .dx = mxGetScalar(mxGetField(spIn, 0, "dx")),
-        .numM = mxGetScalar(mxGetField(spIn, 0, "numM")),
+        .dt = mxGetScalar(mxGetField(sp_in, 0, "dt")),
+        .Nt = mxGetScalar(mxGetField(sp_in, 0, "Nt")),
+        .Ny = mxGetScalar(mxGetField(sp_in, 0, "Ny")),
+        .Nx = mxGetScalar(mxGetField(sp_in, 0, "Nx")),
+        .dy = mxGetScalar(mxGetField(sp_in, 0, "dy")),
+        .dx = mxGetScalar(mxGetField(sp_in, 0, "dx")),
+        .Ns = mxGetScalar(mxGetField(sp_in, 0, "Ns")),
+        .Np = mxGetScalar(mxGetField(sp_in, 0, "Np")),
+        .Npxy = mxGetScalar(mxGetField(sp_in, 0, "Npxy")),
 
-        .P   = (single*)mxGetData(mxGetField(spIn, 0, "P")),
-        .Pxy = (single*)mxGetData(mxGetField(spIn, 0, "Pxy")),
+        .P   = (single*)mxGetData(mxGetField(sp_in, 0, "P")),
+        .Pxy = (single*)mxGetData(mxGetField(sp_in, 0, "Pxy")),
 
-        .bcMtop = (single*)mxGetData( mxGetField(bc, 0, "Mtop") ),
-        .bcMbot = (single*)mxGetData( mxGetField(bc, 0, "Mbot") ),
-        .bcMrig = (single*)mxGetData( mxGetField(bc, 0, "Mrig") ),
-        .bcMlef = (single*)mxGetData( mxGetField(bc, 0, "Mlef") ),
+        .bcMtop = (single*)mxGetData( mxGetField(bc, 0, "S_top") ),
+        .bcMbot = (single*)mxGetData( mxGetField(bc, 0, "S_bot") ),
+        .bcMrig = (single*)mxGetData( mxGetField(bc, 0, "S_rig") ),
+        .bcMlef = (single*)mxGetData( mxGetField(bc, 0, "S_lef") ),
 
-        .useRK4 = mxGetScalar(mxGetField(spIn, 0, "useRK4")),
-        .useGPU = mxGetScalar(mxGetField(spIn, 0, "useGPU")),
-        .preserveNorm = mxGetScalar(mxGetField(spIn, 0, "preserveNorm"))
+        .useRK4 = mxGetScalar(mxGetField(sp_in, 0, "useRK4")),
+        .useGPU = mxGetScalar(mxGetField(sp_in, 0, "useGPU")),
     };
+
+    // const mwSize *dimsP = mxGetDimensions(mxGetField(sp_in, 0, "P"));
+    // const mwSize *dimsPxy = mxGetDimensions(mxGetField(sp_in, 0, "Pxy"));
+    // sp.Np = dimsP[1];       // Np = length of P
+    // sp.Npxy = dimsPxy[0];   // Npxy = length of first dimension of P
+
     return sp;
 }
 
@@ -345,33 +249,33 @@ void mexFunction( int nlhs, mxArray *plhs[],
                 "Too many output arguments.");
 
     /* Check for proper inputs */
-    const mxArray *spIn = prhs[0];
-    const mxArray *MIn = prhs[1];
-    if(!mxIsStruct(spIn))
-        mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotStruct",
-                "First input (sp) must be a structure.");
-    else if(!mxIsSingle(MIn) || mxGetNumberOfDimensions(MIn) != 3)
+    const mxArray *S_in = prhs[0];
+    const mxArray *sp_in = prhs[1];
+    if(!mxIsSingle(S_in) || mxGetNumberOfDimensions(S_in) != 3)
         mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotDouble",
-                "Second input (M) must be a 3-D array of class single.");
+                "First input (S) must be a 3-D array of class single.");
+    else if(!mxIsStruct(sp_in))
+        mexErrMsgIdAndTxt( "MyToolbox:odeStepComp:inputNotStruct",
+                "Second input (sp) must be a structure.");
 
     /* Assign the inputs */
-    simParam sp = parseSimParam( spIn );
-    single *M = mxGetData( MIn );
+    single *S = mxGetData( S_in );
+    simParam sp = parseSimParam( sp_in );
 
     /* Create output array */
-    const mwSize *dims = mxGetDimensions(MIn);
-    mxArray *MnextOut = mxCreateNumericArray( mxGetNumberOfDimensions(MIn),
-                                          mxGetDimensions(MIn),
+    const mwSize *dims = mxGetDimensions(S_in);
+    mxArray *Snext_out = mxCreateNumericArray( mxGetNumberOfDimensions(S_in),
+                                          mxGetDimensions(S_in),
                                           mxSINGLE_CLASS, mxREAL );
-    single *Mnext = mxGetData( MnextOut );
+    single *Snext = mxGetData( Snext_out );
 
     /* Invoke the computation */
     if( sp.useRK4 )
-        rk4Step( Mnext, sp, M );
+        rk4Step( Snext, S, sp );
     else
-        eulerStep( Mnext, sp, M );
+        eulerStep( Snext, S, sp );
 
     /* Return the output array */
-    plhs[0] = MnextOut;
+    plhs[0] = Snext_out;
     return;
 }
