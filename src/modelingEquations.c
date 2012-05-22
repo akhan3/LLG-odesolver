@@ -93,13 +93,13 @@ void differentiateStateVectorField( single *Sprime, single *S, simParam sp )
                 // this function must be called to take care of boundary conditions and pick proper neighbors
                 pickNeighbors(&S_top, &S_bot, &S_rig, &S_lef, S, sp, ix, iy );
                 /* Calculate Laplacian */
-                single *M0 = &S[iy*sp.Ns + ix*sp.Ny*sp.Ns];   // pointer to itself
-                single L_Mx = (S_rig[0] - 2*M0[0] + S_lef[0]) / (sp.dx*sp.dx) +
-                              (S_top[0] - 2*M0[0] + S_bot[0]) / (sp.dy*sp.dy);
-                single L_My = (S_rig[1] - 2*M0[1] + S_lef[1]) / (sp.dx*sp.dx) +
-                              (S_top[1] - 2*M0[1] + S_bot[1]) / (sp.dy*sp.dy);
-                single L_Mz = (S_rig[2] - 2*M0[2] + S_lef[2]) / (sp.dx*sp.dx) +
-                              (S_top[2] - 2*M0[2] + S_bot[2]) / (sp.dy*sp.dy);
+                single *S_cen = &S[iy*sp.Ns + ix*sp.Ny*sp.Ns];   // pointer to itself
+                single L_Mx = (S_rig[0] - 2*S_cen[0] + S_lef[0]) / (sp.dx*sp.dx) +
+                              (S_top[0] - 2*S_cen[0] + S_bot[0]) / (sp.dy*sp.dy);
+                single L_My = (S_rig[1] - 2*S_cen[1] + S_lef[1]) / (sp.dx*sp.dx) +
+                              (S_top[1] - 2*S_cen[1] + S_bot[1]) / (sp.dy*sp.dy);
+                single L_Mz = (S_rig[2] - 2*S_cen[2] + S_lef[2]) / (sp.dx*sp.dx) +
+                              (S_top[2] - 2*S_cen[2] + S_bot[2]) / (sp.dy*sp.dy);
                 /* Add exchange field */
                 H[iy*sp.Ns+ix*sp.Ny*sp.Ns+0] += exchangeConstant * L_Mx;
                 H[iy*sp.Ns+ix*sp.Ny*sp.Ns+1] += exchangeConstant * L_My;

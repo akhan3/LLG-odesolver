@@ -38,7 +38,7 @@ clear
     % material parameters
     % ==========================================================================
     % Paramters that are uniform over the mesh
-    sp.P = single(zeros(1,1));  % initialize to be of singe precision
+    sp.P = single(zeros(1,1));  % initialize to be of single precision
     sp.P( 1) = 8.6e5;       % Saturation magnetization [A/m]
     sp.P( 2) = 2.21e5;      % gamma. Gyromagnetic Ratio [1/(A/m/s)]
     sp.P( 3) = 0.05;        % Damping factor [dim-less]
