@@ -14,13 +14,13 @@ clear
 %===============================================================================
     % Stuff all the parameters in a simParam structure
     % Some book-keeping information
-    sp.simName = 'Untitled Simulation';
+    sp.simName = 'Maxwell_1';
     sp.startTimeStamp = clock;  % record the start wall-clock-time
     sp.finishedWithSuccess = 0; % initially mark as unsuccessful
     % simulation time
     sp.ti = 0;      % initial time [s]
-    sp.tf = .5e-9;  % final time [s]
-    sp.dt = 1e-13;  % time step [s]
+    sp.tf = 200.0;  % final time [s]
+    sp.dt = 0.01;  % time step [s]
     sp.t = [sp.ti:sp.dt:sp.tf]; % time array [s]
     sp.Nt = length(sp.t);       % number of time points
     % number and size of the dots
@@ -28,10 +28,14 @@ clear
         % Total GPU memory = 2.8177e+09 Bytes
         % Each dot requires 3*4 Bytes
         % 2.8177e+09/12/10 to accommodate S(t),S(t+1),Hext,... on the GPU
-    sp.Ny = 60;     % #rows of dots in the plane
-    sp.Nx = 80;     % #columns of dots in the plane
-    sp.dy = 100e-9; % y-length of a dot [m]
-    sp.dx = 100e-9; % x-width of a dot [m]
+    sp.Ny = 70;     % #rows of dots in the plane
+    sp.Nx = 70;     % #columns of dots in the plane
+    sp.dy = 5.0; % y-length of a dot [m]
+    sp.dx = 5.0; % x-width of a dot [m]
+
+
+    %The variables are Hx, Hy, Ez
+
     sp.Ns = 3;    % numer of state variables at each mesh point (size of state vector)
 
     % ==========================================================================
@@ -39,36 +43,14 @@ clear
     % ==========================================================================
     % Paramters that are uniform over the mesh
     sp.P = single(zeros(1,1));  % initialize to be of single precision
-    sp.P( 1) = 8.6e5;       % Saturation magnetization [A/m]
-    sp.P( 2) = 2.21e5;      % gamma. Gyromagnetic Ratio [1/(A/m/s)]
-    sp.P( 3) = 0.05;        % Damping factor [dim-less]
-    sp.P( 4) = 1.3e-11;     % Exchange constant [J/A]
-    sp.P( 5) = 1e5;         % Anisotropy constant [J/m^3]
-    sp.P( 6) = 0;   % x-component of unit vector defining anisotropy axes [dim-less]
-    sp.P( 7) = 0;   % y-component of unit vector defining anisotropy axes [dim-less]
-    sp.P( 8) = 1;   % z-component of unit vector defining anisotropy axes [dim-less]
-    % Coupling coefficient [dim-less]
-        % It is defined to be negative here and used as it is in field calculation
-    sp.P( 9) = -.2;    % x-coupling coefficient [dim-less]
-    sp.P(10) = -.2;    % y-coupling coefficient [dim-less]
-    sp.P(11) = -.2;    % z-coupling coefficient [dim-less]
-    % Demag factor [dim-less]
-        % It is defined to be positive here and used as negative in field calculation
-    sp.P(12) = .4;      % x-demag factor [dim-less]
-    sp.P(13) = .4;      % y-demag factor [dim-less]
-    sp.P(14) = .2;      % z-demag factor [dim-less]
-    sp.P(15) = 1;       % preserveNorm. If 1, all S vectors will be
-                        %   re-normalized to Ms after the ODE-step is taken,
+    sp.P( 1) = 0.0;       % This is a dummy parameter
+
+
 
     % Paramters that vary over the mesh. P(y,x)
-    sp.Pxy = single(zeros(1, sp.Ny,sp.Nx));
-    sp.Pxy(1, :,:) = 0 * ones(sp.Ny,sp.Nx);      % frozenMask. S will be kept frozen where this variable is 1
-    %sp.Pxy(1, 5:20,10:45) = 1;
-    sp.Pxy(2, :,:) = .05 * ones(sp.Ny,sp.Nx);    % Position dependent damping factor
-    % External field. Time dependence will be defined in time marching loop
-    sp.Pxy(3, :,:) = 0;  % x-component of Hext [A/m]
-    sp.Pxy(4, :,:) = 0;  % y-component of Hext [A/m]
-    sp.Pxy(5, :,:) = 0;  % z-component of Hext [A/m]
+    sp.Pxy = single(zeros(1, sp.Ny,sp.Nx)); % This is a dummy parameter
+
+
     sp.Np = length(sp.P);         % numer of spatially uniform paramters
     sp.Npxy = size(sp.Pxy, 1);    % numer of spatially varying paramters
     % ==========================================================================
@@ -91,48 +73,21 @@ clear
     S = single(zeros(sp.Ns,sp.Ny,sp.Nx,sp.Nt)); % can be huge in size
 
 
-%%===============================================================================
-%%% Define External field's time and spatial dependence
-    %% Hext can either be defined completely beforehand here before entering
-    %% time-marching loop. It can, of course, also be modified in the
-    %% time-marching loop
-%%===============================================================================
-    %% This defines a 10GHz disc shaped oscillator near the center of the matrix
-    %r = round(sp.Ny/6);
-    %cx = round(sp.Nx/2);
-    %cy = round(sp.Ny/3);
-    %f = 10e9;
-    %amplitude = 5;
-    %sinwave = sin(2*pi*f*sp.t);
-    %for y = 1:sp.Ny
-        %for x = 1:sp.Nx
-            %if (y-cy)^2 + (x-cx)^2 < r^2
-                %for it = 1:sp.Nt
-                    %Hext(3,y,x,it) = amplitude*Ms * sinwave(it);
-                %end
-            %end
-        %end
-    %end
 
 
 %===============================================================================
 %% intial condtion for S
 %===============================================================================
-    random = 1;
-    if random
-        rng(2012);  % seed the random generator first to reproduce results
-        theta = pi .* rand(sp.Ny, sp.Nx);
-        phi = 2*pi .* rand(sp.Ny, sp.Nx);
-    else
-        theta =  45 * pi/180 .* ones(sp.Ny, sp.Nx);
-        phi   =  45 * pi/180 .* ones(sp.Ny, sp.Nx);
-        %phi = 2*pi .* rand(sp.Ny, sp.Nx);
-    end
-    Ms = sp.P(1);
-    initCond.S = zeros(sp.Ns,sp.Ny,sp.Nx);
-    initCond.S(1,:,:) = Ms .* sin(theta) .* cos(phi);
-    initCond.S(2,:,:) = Ms .* sin(theta) .* sin(phi);
-    initCond.S(3,:,:) = Ms .* cos(theta);
+
+
+    initCond.S(1,sp.Ny,sp.Nx) = 0.0;
+    initCond.S(2,sp.Ny,sp.Nx) = 0.0;
+    initCond.S(3,sp.Ny,sp.Nx) = 0.0;
+
+    %Just add a value at
+    initCond.S(3,round(sp.Nx*0.45):round(sp.Nx*0.55),round(sp.Ny*0.45):round(sp.Ny*0.55)) = 1.0;
+
+
     % assign initCond.S to S(r,t=1) - DON'T FORGET!
     S(:,:,:,1) = initCond.S;
 
@@ -164,10 +119,10 @@ clear
     sp.boundCond.S_rig = zeros(sp.Ns,sp.Ny);    % +x right
     sp.boundCond.S_lef = zeros(sp.Ns,sp.Ny);    % -x left
     % set some boundary conditions. They can be changed in time-marching
-    sp.boundCond.S_lef(3,:) = -5*Ms;    % set left boundary to all down -z
-    sp.boundCond.S_rig(3,:) = +5*Ms;    % set right boundary to all up +z
-    sp.boundCond.S_top(3,:) = +5*Ms;    % set top boundary to all up +z
-    sp.boundCond.S_bot(3,:) = -5*Ms;    % set bottom boundary to all down -z
+%     sp.boundCond.S_lef(3,:) = -5*Ms;    % set left boundary to all down -z
+%     sp.boundCond.S_rig(3,:) = +5*Ms;    % set right boundary to all up +z
+%     sp.boundCond.S_top(3,:) = +5*Ms;    % set top boundary to all up +z
+%     sp.boundCond.S_bot(3,:) = -5*Ms;    % set bottom boundary to all down -z
 
 
 %===============================================================================
@@ -200,29 +155,19 @@ for k = 1:length(sp.t)-1   % solve ODE for all time points but last
 
     % Hext time dependence is defined here
     %===============================================================================
-    % This defines a 10GHz disc shaped oscillator near the center of the matrix
-    r = round(sp.Ny/6);     % radius of disc
-    cx = round(sp.Nx/2);    % x-center of disc
-    cy = round(sp.Ny/3);    % y-center of disc
-    [X Y] = meshgrid(1:sp.Nx, 1:sp.Ny);
-    dicsMask = [(Y-cy).^2 + (X-cx).^2 < r^2];
-    f = 10e9;
-    amplitude = 5;
-    sinwave = sin(2*pi*f*sp.t);
-    % drive the z-component of Hext only
-    sp.Pxy(5,:,:) = dicsMask .* amplitude*Ms * sinwave(k);
+% %     % This defines a 10GHz disc shaped oscillator near the center of the matrix
+% %     r = round(sp.Ny/6);     % radius of disc
+% %     cx = round(sp.Nx/2);    % x-center of disc
+% %     cy = round(sp.Ny/3);    % y-center of disc
+% %     [X Y] = meshgrid(1:sp.Nx, 1:sp.Ny);
+% %     dicsMask = [(Y-cy).^2 + (X-cx).^2 < r^2];
+% %     f = 10e9;
+% %     amplitude = 5;
+% %     sinwave = sin(2*pi*f*sp.t);
+% %     % drive the z-component of Hext only
+% %     sp.Pxy(5,:,:) = dicsMask .* amplitude*Ms * sinwave(k);
 
-    % Flip the boundary conditions for second half of the simulation
-    %%===============================================================================
-    if k >= int32(sp.Nt/2)
-        sp.boundCond.S_lef(3,:) = +5*Ms;
-        sp.boundCond.S_rig(3,:) = -5*Ms;
-        sp.boundCond.S_top(3,:) = -5*Ms;
-        sp.boundCond.S_bot(3,:) = +5*Ms;
-    end
-
-    %break
-end
+   end
 
 %===============================================================================
 %% More book-keeping information in simParam structure
@@ -238,4 +183,5 @@ fprintf('INFO: Simulation Finished!\n');
 %===============================================================================
 %% Post processing (optional): save the data and visualize the result
 %===============================================================================
-%animateDots
+
+%save ODEdata
