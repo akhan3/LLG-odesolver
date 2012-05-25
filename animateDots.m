@@ -3,7 +3,8 @@ fprintf('Animating %d timepoints... ', sp.Nt);
 doQuiver = 0;
 
 %% Normalize S
-Ms = sp.P(1);
+%Ms = sp.P(1);
+Ms = 1;
 mz = squeeze(S(3,:,:,:)) / Ms;
 if doQuiver
     mx = squeeze(S(1,:,:,:)) / Ms;
@@ -22,7 +23,7 @@ axis equal;
 axis ij;
 axis([1 sp.Nx 1 sp.Ny]);
 ith = title('m_z(n = 0)');
-colormap('hot');
+colormap('jet');
 % colormap('jet');
 colorbar;
 
@@ -36,7 +37,7 @@ if doQuiver
 end
 
 
-for i = 1:200:sp.Nt % default is 40
+for i = 1:100:sp.Nt % default is 40
     set(ih, 'cdata', double(mz(:,:,i)));
     set(ith, 'string', ['m_z(n = ', num2str(i), ')']);
     if doQuiver

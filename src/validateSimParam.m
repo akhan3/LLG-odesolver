@@ -31,6 +31,7 @@ function [success,sp,S] = validateSimParam(sp,S)
     % ODE Solver selection
     spDefault.useRK4 = int32(0);
     spDefault.useGPU = int32(0);
+    spDefault.useGPUnum = int32(0);
     % Boundary condition defaults to ZERO
     spDefault.boundCond.S_top = single(zeros(spDefault.Ns,sp.Nx));    % +x top
     spDefault.boundCond.S_bot = single(zeros(spDefault.Ns,sp.Nx));    % -x bottom
@@ -90,6 +91,7 @@ function [success,sp,S] = validateSimParam(sp,S)
     sp.Pxy = single(sp.Pxy);
     sp.useRK4 = int32(sp.useRK4);
     sp.useGPU = int32(sp.useGPU);
+    sp.useGPUnum = int32(sp.useGPUnum);
     sp.boundCond.S_top = single(sp.boundCond.S_top);
     sp.boundCond.S_bot = single(sp.boundCond.S_bot);
     sp.boundCond.S_rig = single(sp.boundCond.S_rig);

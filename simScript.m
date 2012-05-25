@@ -6,8 +6,12 @@ clear
 %===============================================================================
     mexDir = 'src';
     addpath(mexDir);    % add to path
-    mexSetup(mexDir);   % compile the MEX file
+    status = mexSetup(mexDir);   % compile the MEX file
+%return
 
+    if(status ~= 0)
+        return
+    end
 
 %===============================================================================
 %% Simulation parameters
@@ -28,8 +32,8 @@ clear
         % Total GPU memory = 2.8177e+09 Bytes
         % Each dot requires 3*4 Bytes
         % 2.8177e+09/12/10 to accommodate S(t),S(t+1),Hext,... on the GPU
-    sp.Ny = 70;     % #rows of dots in the plane
-    sp.Nx = 70;     % #columns of dots in the plane
+    sp.Ny = 100;     % #rows of dots in the plane
+    sp.Nx = 100;     % #columns of dots in the plane
     sp.dy = 5.0; % y-length of a dot [m]
     sp.dx = 5.0; % x-width of a dot [m]
 
@@ -58,6 +62,7 @@ clear
     % ODE Solver selection
     sp.useRK4 = 0;  % if 1, RK4-ODE-solver will be used, otherwise Euler's
     sp.useGPU = 0;  % if 1, GPU will be used
+    sp.useGPUnum = 0;  % which GPU to use (starting from 0). We have only 2 (0 or 1)
 
 
 %===============================================================================

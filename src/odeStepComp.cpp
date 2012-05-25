@@ -2,6 +2,8 @@
  * odeStepComp.c
  *
  * This is the top level for compiling odeStepComp mex-Funtion.
+ * Don't touch this file unless you need to add the code to read a new
+ * parameter in sp structure
  *
  * Project:     Massive ODE Solver
  * Author:      Aamir Ahmed Khan (akhan3@nd.edu)
@@ -9,27 +11,8 @@
  * =========================================================================*/
 
 
-#include "mex.h"
-#include "string.h"
-#include "assert.h"
-#include "math.h"
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
-typedef float single;
-
-/* Define the simParam structure */
-typedef struct {
-    single dt;
-    int Nt, Ny, Nx;
-    single dy, dx;
-    int Ns, Np, Npxy;
-    single *P;
-    single *Pxy;
-    single *bcMtop, *bcMbot, *bcMrig, *bcMlef;
-    int useRK4, useGPU;
-} simParam;
+#include "globals.h"
+#include <mex.h>
 
 
 /* IMPORTANT: Don't mess with this function!!! Just use it */
@@ -60,7 +43,7 @@ void pickNeighbors( single **S_top, single **S_bot, single **S_rig, single **S_l
 
 
 /* Including the user defined source file containing the model */
-#include "modelingEquations.c"
+#include "modelingEquations.cpp"
 
 
 /*! Takes one ODE step by Euler's method.
@@ -73,7 +56,10 @@ void eulerStep( single *Snext, single *S, simParam sp )
     /* Allocate memory for Sprime vector field */
     single *Sprime = (single*)calloc( sp.Ns*Nxy, sizeof(single) );
     /* Calculate the slopes by executing differential equations */
-    differentiateStateVectorField( Sprime, S, sp );
+        if(sp.useGPU)
+            differentiateStateVectorField_d( Sprime, S, sp );
+        else
+            differentiateStateVectorField( Sprime, S, sp );
     /* Advance to the next time instant */
     #ifdef _OPENMP
     #pragma omp parallel for
@@ -105,7 +91,10 @@ void rk4Step( single *Snext, single *S, simParam sp )
     /* k1: Calculate the slopes by executing differential equations */
     {
         single *k1 = Sprime;    // k1 <= Sprime (just a reference. Memory is still allocated only once)
-        differentiateStateVectorField( k1, S, sp );
+        if(sp.useGPU)
+            differentiateStateVectorField_d( k1, S, sp );
+        else
+            differentiateStateVectorField( k1, S, sp );
         #ifdef _OPENMP
         #pragma omp parallel for
         #endif
@@ -126,7 +115,10 @@ void rk4Step( single *Snext, single *S, simParam sp )
     /* k2: Calculate the slopes by executing differential equations */
     {
         single *k2 = Sprime;    // k2 <= Sprime (just a reference. Memory is still allocated only once)
-        differentiateStateVectorField( k2, Snext, sp );
+        if(sp.useGPU)
+            differentiateStateVectorField_d( k2, Snext, sp );
+        else
+            differentiateStateVectorField( k2, Snext, sp );
         #ifdef _OPENMP
         #pragma omp parallel for
         #endif
@@ -147,7 +139,10 @@ void rk4Step( single *Snext, single *S, simParam sp )
     /* k3: Calculate the slopes by executing differential equations */
     {
         single *k3 = Sprime;    // k3 <= Sprime (just a reference. Memory is still allocated only once)
-        differentiateStateVectorField( k3, Snext, sp );
+        if(sp.useGPU)
+            differentiateStateVectorField_d( k3, Snext, sp );
+        else
+            differentiateStateVectorField( k3, Snext, sp );
         #ifdef _OPENMP
         #pragma omp parallel for
         #endif
@@ -168,7 +163,10 @@ void rk4Step( single *Snext, single *S, simParam sp )
     /* k4: Calculate the slopes by executing differential equations */
     {
         single *k4 = Sprime;    // k4 <= Sprime (just a reference. Memory is still allocated only once)
-        differentiateStateVectorField( k4, Snext, sp );
+        if(sp.useGPU)
+            differentiateStateVectorField_d( k4, Snext, sp );
+        else
+            differentiateStateVectorField( k4, Snext, sp );
         #ifdef _OPENMP
         #pragma omp parallel for
         #endif
@@ -201,36 +199,35 @@ simParam parseSimParam( const mxArray *sp_in )
 {
     /* get the pointer to the nested boundary-condition structure */
     mxArray *bc = mxGetField(sp_in, 0, "boundCond");
-    single *bcMtop = (single*)mxGetData( mxGetField(bc, 0, "S_top") );
 
     /* fill up the sp structure */
-    simParam sp = {
-        .dt = mxGetScalar(mxGetField(sp_in, 0, "dt")),
-        .Nt = mxGetScalar(mxGetField(sp_in, 0, "Nt")),
-        .Ny = mxGetScalar(mxGetField(sp_in, 0, "Ny")),
-        .Nx = mxGetScalar(mxGetField(sp_in, 0, "Nx")),
-        .dy = mxGetScalar(mxGetField(sp_in, 0, "dy")),
-        .dx = mxGetScalar(mxGetField(sp_in, 0, "dx")),
-        .Ns = mxGetScalar(mxGetField(sp_in, 0, "Ns")),
-        .Np = mxGetScalar(mxGetField(sp_in, 0, "Np")),
-        .Npxy = mxGetScalar(mxGetField(sp_in, 0, "Npxy")),
+    simParam sp;
+    sp.dt = mxGetScalar(mxGetField(sp_in, 0, "dt"));
+    sp.Nt = mxGetScalar(mxGetField(sp_in, 0, "Nt"));
+    sp.Ny = mxGetScalar(mxGetField(sp_in, 0, "Ny"));
+    sp.Nx = mxGetScalar(mxGetField(sp_in, 0, "Nx"));
+    sp.dy = mxGetScalar(mxGetField(sp_in, 0, "dy"));
+    sp.dx = mxGetScalar(mxGetField(sp_in, 0, "dx"));
+    sp.Ns = mxGetScalar(mxGetField(sp_in, 0, "Ns"));
+    sp.Np = mxGetScalar(mxGetField(sp_in, 0, "Np"));
+    sp.Npxy = mxGetScalar(mxGetField(sp_in, 0, "Npxy"));
 
-        .P   = (single*)mxGetData(mxGetField(sp_in, 0, "P")),
-        .Pxy = (single*)mxGetData(mxGetField(sp_in, 0, "Pxy")),
+    sp.P   = (single*)mxGetData(mxGetField(sp_in, 0, "P"));
+    sp.Pxy = (single*)mxGetData(mxGetField(sp_in, 0, "Pxy"));
 
-        .bcMtop = (single*)mxGetData( mxGetField(bc, 0, "S_top") ),
-        .bcMbot = (single*)mxGetData( mxGetField(bc, 0, "S_bot") ),
-        .bcMrig = (single*)mxGetData( mxGetField(bc, 0, "S_rig") ),
-        .bcMlef = (single*)mxGetData( mxGetField(bc, 0, "S_lef") ),
+    sp.bcMtop = (single*)mxGetData( mxGetField(bc, 0, "S_top") );
+    sp.bcMbot = (single*)mxGetData( mxGetField(bc, 0, "S_bot") );
+    sp.bcMrig = (single*)mxGetData( mxGetField(bc, 0, "S_rig") );
+    sp.bcMlef = (single*)mxGetData( mxGetField(bc, 0, "S_lef") );
 
-        .useRK4 = mxGetScalar(mxGetField(sp_in, 0, "useRK4")),
-        .useGPU = mxGetScalar(mxGetField(sp_in, 0, "useGPU")),
-    };
+    sp.useRK4 = mxGetScalar(mxGetField(sp_in, 0, "useRK4"));
+    sp.useGPU = mxGetScalar(mxGetField(sp_in, 0, "useGPU"));
+    sp.useGPUnum = mxGetScalar(mxGetField(sp_in, 0, "useGPUnum"));
 
-    // const mwSize *dimsP = mxGetDimensions(mxGetField(sp_in, 0, "P"));
-    // const mwSize *dimsPxy = mxGetDimensions(mxGetField(sp_in, 0, "Pxy"));
-    // sp.Np = dimsP[1];       // Np = length of P
-    // sp.Npxy = dimsPxy[0];   // Npxy = length of first dimension of P
+    const mwSize *dimsP = mxGetDimensions(mxGetField(sp_in, 0, "P"));
+    const mwSize *dimsPxy = mxGetDimensions(mxGetField(sp_in, 0, "Pxy"));
+    sp.Np = dimsP[1];       // Np = length of P
+    sp.Npxy = dimsPxy[0];   // Npxy = length of first dimension of P
 
     return sp;
 }
@@ -259,15 +256,14 @@ void mexFunction( int nlhs, mxArray *plhs[],
                 "Second input (sp) must be a structure.");
 
     /* Assign the inputs */
-    single *S = mxGetData( S_in );
+    single *S = (single*)mxGetData( S_in );
     simParam sp = parseSimParam( sp_in );
 
     /* Create output array */
-    const mwSize *dims = mxGetDimensions(S_in);
     mxArray *Snext_out = mxCreateNumericArray( mxGetNumberOfDimensions(S_in),
                                           mxGetDimensions(S_in),
                                           mxSINGLE_CLASS, mxREAL );
-    single *Snext = mxGetData( Snext_out );
+    single *Snext = (single*)mxGetData( Snext_out );
 
     /* Invoke the computation */
     if( sp.useRK4 )
